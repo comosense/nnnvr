@@ -30,7 +30,7 @@ Place `nnnvr.py` in your desired working directory and grant it executable permi
 * Example on Debian / Ubuntu:
   ```sh
   cd /WORK/DIR
-  wget https://xxx/nnnvr.py -P ./
+  curl https://raw.githubusercontent.com/comosense/nnnvr/refs/heads/main/nnnvr.py > nnnvr.py
   chmod +x ./nnnvr.py
   ```
 
