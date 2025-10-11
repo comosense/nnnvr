@@ -23,7 +23,7 @@ from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 
 @dataclass(frozen=True)
 class Constant:
-    VERSION: str = "1.0.6-20251010"
+    VERSION: str = "1.0.6-20251010-mod"
     BASE_FILE_NAME: str = os.path.splitext(os.path.basename(__file__))[0]
     PREF_FILE_NAME: str = BASE_FILE_NAME + ".json"
 
@@ -56,9 +56,9 @@ class Constant:
 
     MAIN_THREAD_SLEEP: float = float(1 * SEC)
     LOOPER_SLEEP: float = float(1 * SEC)
-    RECORDER_WD_PERIOD: float = float(1 * MIN_TO_SEC)
     STORAGER_EXEC_PERIOD: float = float(5 * MIN_TO_SEC)
-    RECORDING_OBS_TIME: float = float(-1 * MIN_TO_SEC)
+    RECORDER_WD_PERIOD: float = float(1 * MIN_TO_SEC)
+    RECORDER_OBS_MARGIN: float = float(1 * MIN_TO_SEC)
 
     LOCK_FILE_NAME: str = BASE_FILE_NAME + ".lock"
     PID_OF_NOBODY: int = -1
@@ -66,8 +66,8 @@ class Constant:
     LOCK_EXPIRY: float = LOCK_CHECK_SLEEP * 5
     STOP_REQUEST_TIMEOUT: float = float(10 * SEC)
 
-    EMPTY_STR: str = ""
     DATE_FORMAT: str = "%Y/%m/%d %H:%M:%S"
+    EMPTY_STR: str = ""
 
 
 @dataclass(frozen=True)
@@ -101,10 +101,9 @@ class Error:
 C = Constant()
 D = Default()
 E = Error()
+T = typing.TypeVar("T")
 LOGGER = logging.getLogger(__name__)
 STREAM_LOGGER = logging.getLogger(__name__ + "stream")
-
-T = typing.TypeVar("T")
 
 
 class PrefDict(UserDict[typing.Any, typing.Any]):
@@ -167,6 +166,7 @@ class RecorderEnv:
 
     name: str = field(init=False)
     vfile_pat: str = field(init=False, hash=False, compare=False)
+    obs_time: float = field(init=False, hash=False, compare=False)
     cmd: tuple[str, ...] = field(init=False, hash=False, compare=False)
 
     def __post_init__(self, rec_bin: str, video_dir: str, pref: PrefDict) -> None:
@@ -182,14 +182,15 @@ class RecorderEnv:
             vcodec_option = ["-c:v", vcodec] if isinstance(vcodec, str) else []
             fps_option = ["-r", str(fps)] if isinstance(fps, int) else []
             acodec_option = ["-c:a", acodec] if isinstance(acodec, str) else []
+            vfile = os.path.join(
+                video_dir, filename(name, C.VFILE_NAME_DATE_FMT, ext=ext)
+            )
 
             self.name = name
             self.vfile_pat = os.path.join(
                 video_dir, filename(name, C.VFILE_NAME_DATE_PAT, ext=ext)
             )
-            vfile = os.path.join(
-                video_dir, filename(name, C.VFILE_NAME_DATE_FMT, ext=ext)
-            )
+            self.obs_time = float(segment_sec) + C.RECORDER_OBS_MARGIN
             self.cmd = tuple(
                 [rec_bin]
                 + ["-nostdin"]
@@ -297,7 +298,7 @@ class Recorder(Looper):
     def __loop__(self) -> None:
         if self._popen and (self._popen.poll() is None):
             if self.elapsed >= C.RECORDER_WD_PERIOD:
-                if not is_recording(self._env.vfile_pat):
+                if not is_recording(self._env.vfile_pat, self._env.obs_time):
                     LOGGER.error(f"KILL INACTIVE STREAM: {self._env.name}")
                     self.send_stop()
                 self.reset_elapsed()
@@ -472,8 +473,8 @@ def remove(path: str) -> bool:
     return result
 
 
-FindType: typing.TypeAlias = typing.Literal["f", "d", "fd"]
-FindSort: typing.TypeAlias = typing.Literal["n", "t"]
+FindType = typing.Literal["f", "d", "fd"]
+FindSort = typing.Literal["n", "t"]
 
 
 def find(
@@ -563,8 +564,8 @@ def stop_request(lock: str) -> bool | None:
     return result
 
 
-def is_recording(vfile_pat: str) -> bool:
-    return bool(find(vfile_pat, C.RECORDING_OBS_TIME))
+def is_recording(vfile_pat: str, observation_time: float) -> bool:
+    return bool(find(vfile_pat, -observation_time))
 
 
 def start_looper(looper: LooperT | None) -> LooperT | None:
@@ -635,17 +636,16 @@ def get_unrecordings(
 def init(cwd: str) -> Env | None:
     env: Env | None = None
 
-    temp_env: Env | None = None
-    is_created_dirs: bool = True
+    is_made_dir: bool = True
     try:
-        temp_env = Env(cwd)
-        for dir in [temp_env.log_env.dir, temp_env.storager_env.archive_dir]:
-            is_created_dirs &= makedirs(dir)
+        env = Env(cwd)
+        for dir in [env.log_env.dir, env.storager_env.archive_dir]:
+            is_made_dir &= makedirs(dir)
     except Exception as e:
+        is_made_dir = False
         print(f"FAILED TO INITIALIZE: {cwd} - {e}", file=sys.stderr)
 
-    if temp_env and is_created_dirs:
-        env = temp_env
+    if env and is_made_dir:
         handler = TimedRotatingFileHandler(
             os.path.join(env.log_env.dir, C.LOG_NAME),
             when=C.LOG_WHEN,
@@ -668,6 +668,7 @@ def init(cwd: str) -> Env | None:
         STREAM_LOGGER.setLevel(C.STREAMLOG_LEVEL)
 
     else:
+        env = None
         print("FAILED TO PREPARE DIRECTORIES", file=sys.stderr)
 
     return env
@@ -681,7 +682,7 @@ def status(env: Env, args: argparse.Namespace) -> int:
 
     print("[STREAM]")
     for recorder_env in env.recorder_envs:
-        if is_recording(recorder_env.vfile_pat):
+        if is_recording(recorder_env.vfile_pat, recorder_env.obs_time):
             print(f"{recorder_env.name} : OK")
         else:
             print(f"{recorder_env.name} : NG")

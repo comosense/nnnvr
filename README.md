@@ -1,11 +1,14 @@
-# nnnvr (No-Named Network Video Recorder)
-There is only one thing this can do, just **Network Video Recording**.
+# nnnvr
+**nnnvr (No-Named Network Video Recorder):** A straightforward, minimalist Network Video Recording solution.
 
 ## Prerequisites
-`nnnvr` has only been tested in a limited environment[^1]. However, it should function on most systems that meet the following requirements, regardless of the specific operating system or hardware.
+While `nnnvr` has only been tested in a limited environment[^1], it is designed to function on most systems that meet the following requirements, regardless of the specific operating system or hardware.
+
+**Note:** The following examples are tailored for Debian-based Linux. Please adapt them for other operating systems (e.g., using `PowerShell`, `Task Scheduler` on Windows, etc.).
+
 
 ### IP Cameras
-You will need IP cameras capable of streaming via **RTSP**.
+You'll need IP cameras that support **RTSP** streaming.
 
 ### ffmpeg
 Install [`ffmpeg`](https://www.ffmpeg.org/) if you don't already have it. On Debian / Ubuntu, the typical installation commands are:
@@ -21,8 +24,6 @@ sudo apt-get update
 sudo apt install python3
 ```
 
-[^1]: [`dietpi(v9.17.2)`](https://dietpi.com/), [`python(3.13.5)`](https://www.python.org/), [`ffmpeg-rockchip`](https://github.com/nyanmisaka/ffmpeg-rockchip), [`Radxa ZERO 3E`](https://radxa.com/products/zeros/zero3e) and [`C530WS`](https://www.tp-link.com/en/home-networking/cloud-camera/tapo-c530ws/)
-
 ## Installation
 
 ### 1. `nnnvr.py`
@@ -36,6 +37,7 @@ Place `nnnvr.py` in your desired working directory and grant it executable permi
 
 ### 2. `nnnvr.json`
 Create the configuration file, `nnnvr.json`, in the working directory, and adjust the settings to match your environment.
+**SECURITY WARNING:** Since `nnnvr.json` contains the RTSP URL (including user/password), it is **crucial** to set appropriate file permissions, such as `chmod 600 ./nnnvr.json`.
 
 * Example 1: Minimal `nnnvr.json`
   ```JSON
@@ -49,6 +51,7 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
       ]
   }
   ```
+
 * Example 2: Comprehensive `nnnvr.json`
   ```JSON
   {
@@ -95,21 +98,21 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
 #### Top-Level Configuration
 |Key|Required|Type|Description|Default|
 |:-|:-|:-|:-|:-|
-|`streams`|Yes|JSON array (See **Stream Configuration**)|An array of IP camera stream configuration objects.|-|
+|`streams`|Yes|JSON array (See **Stream Configuration**) below|An array of IP camera stream configuration objects.|-|
 |`recBin`|No|String|The specified path to the `ffmpeg` executable.|`"ffmpeg"`|
-|`log`|No|JSON (See **Log Configuration**)|Preferences for log file management.|(See **Log Configuration**)|
-|`video`|No|JSON (See **Video Configuration**)|Preferences for video storage management.|(See **Video Configuration**)|
+|`log`|No|JSON (See **Log Configuration**) below|Preferences for log file management.|(See **Log Configuration**)|
+|`video`|No|JSON (See **Video Configuration**) below|Preferences for video storage management.|(See **Video Configuration**)|
 
 #### Stream Configuration ("stream" JSON)
 |Key|Required|Type|Description|Default|
 |:-|:-|:-|:-|:-|
-|`name`|Yes|String|A unique name for stream (e.g., `cctv-X`). **Must be unique.**|-|
+|`name`|Yes|String|A unique name for the stream (e.g., `cctv-X`). **Must be unique.**|-|
 |`url`|Yes|String|The RTSP stream URL (e.g., `"rtsp://..."`).|-|
 |`ext`|No|String|Video file extension and container format (e.g., `mp4`, `ts`).|`"mp4"`|
 |`vcodec`|No|String|Video codec for recording (Equivalent to `ffmpeg`'s `-c:v` option).|(Depends on ffmpeg)|
 |`fps`|No|Integer|Frames per second for recording (Equivalent to `ffmpeg`'s `-r` option).|(Depends on ffmpeg)|
 |`acodec`|No|String|Audio codec for recording (Equivalent to `ffmpeg`'s `-c:a` option).|(Depends on ffmpeg)|
-|`segmentSec`|No|Integer|Duration in seconds to split the recorded video files (Equivalent to `ffmpeg`'s `-segment_time` option).|`900`|
+|`segmentSec`|No|Integer|Duration (in seconds) for splitting the recorded video files (Equivalent to `ffmpeg`'s `-segment_time` option).|`900`|
 
 #### Log Configuration ("log" JSON)
 |Key|Required|Type|Description|Default|
@@ -127,42 +130,27 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
 |`removeStop`|No|Integer|The disk usage percentage threshold to stop removing videos.|`99`|
 
 ## Usage and Testing
-The following examples are for Debian-based Linux. Please adjust them for other operating systems (e.g., using `PowerShell`, `sc.exe` on Windows, etc.).
+**Important:** Ensure the user executing these commands has the necessary permissions to run `ffmpeg`.
 
-**Important:** The commands must be executed by a user with permission to run `ffmpeg`.
-
-**1. Start `nnnvr`:**
-* A. If `nnnvr.py` and `nnnvr.json` are in the same directory:*
-  ```sh
-  cd /WORK/DIR
-  ./nnnvr.py start &
-  ```
-* B. If files are in different directories:
-  ```sh
-  /PATH/TO/nnnvr.py -d /WORK/DIR start &
-  ```
+### 1. Start `nnnvr`
+```sh
+cd /WORK/DIR
+./nnnvr.py start &
+```
 If successful, a recorded file should be created in the video directory. Check the logs for troubleshooting if it fails.
 
-**2. Check Status:**
-* A.
-  ```sh
-  ./nnnvr.py
-  ```
-* B.
-  ```sh
-  /PATH/TO/nnnvr.py -d /WORK/DIR
-  ```
+If `nnnvr.py` and `nnnvr.json` are not in the same directory, use the `-d` option, like `/PATH/TO/nnnvr.py -d /WORK/DIR start &`. **This directory requirement applies to all subsequent commands.**
+
+### 2. Check Status
+```sh
+./nnnvr.py
+```
 This command show the current `nnnvr` status (e.g., recording activity, disk usage).
 
-**3. Stop `nnnvr`:**
-* A.
-  ```sh
-  ./nnnvr.py stop
-  ```
-* B.
-  ```sh
-  /PATH/TO/nnnvr.py -d /WORK/DIR stop
-  ```
+### 3. Stop `nnnvr`
+```sh
+./nnnvr.py stop
+```
 
 ## Deployment
 The fastest way to run `nnnvr` as a persistent background service is by using `systemd` for daemonization.
@@ -170,8 +158,7 @@ Create the file `nnnvr.service` based on your environment.
 * Example: `nnnvr.service`:
   ```sh
   [Unit]
-  Description=nnnvr is a service of No-Named NVR (Network Video Recorder)
-
+  Description=No-Named NVR (nnnvr) Service
   [Service]
   Type=simple
   Restart=always
@@ -194,3 +181,4 @@ sudo systemctl start nnnvr
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+[^1]: [`dietpi(v9.17.2)`](https://dietpi.com/), [`python(3.13.5)`](https://www.python.org/), [`ffmpeg-rockchip`](https://github.com/nyanmisaka/ffmpeg-rockchip), [`Radxa ZERO 3E`](https://radxa.com/products/zeros/zero3e) and [`C530WS`](https://www.tp-link.com/en/home-networking/cloud-camera/tapo-c530ws/)
