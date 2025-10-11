@@ -37,6 +37,7 @@ Place `nnnvr.py` in your desired working directory and grant it executable permi
 
 ### 2. `nnnvr.json`
 Create the configuration file, `nnnvr.json`, in the working directory, and adjust the settings to match your environment.
+
 **SECURITY WARNING:** Since `nnnvr.json` contains the RTSP URL (including user/password), it is **crucial** to set appropriate file permissions, such as `chmod 600 ./nnnvr.json`.
 
 * Example 1: Minimal `nnnvr.json`
