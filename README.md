@@ -166,7 +166,7 @@ Create the file `nnnvr.service` based on your environment.
   WorkingDirectory=/WORK/DIR
   ExecStart=/PATH/TO/nnnvr.py start
   ExecStop=/PATH/TO/nnnvr.py stop
-  ExecReload=/PATH/TO/nnnvr.py start
+  ExecReload=/PATH/TO/nnnvr.py restart
 
   [Install]
   WantedBy=multi-user.target
