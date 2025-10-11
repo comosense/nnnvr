@@ -29,6 +29,7 @@ class Constant:
 
     SUBCOMMAND_START: str = "start"
     SUBCOMMAND_STOP: str = "stop"
+    SUBCOMMAND_RESTART: str = "restart"
 
     LOG_NAME: str = BASE_FILE_NAME + "_log"
     LOG_WHEN: str = "midnight"
@@ -367,13 +368,13 @@ class Storager(Looper):
                 LOGGER.error(f"FAILED TO ARCHIVE: {src} -> {dst}")
 
     def _rm_subdir(self, dir: str, subdir_name_pat: str, start: int, stop: int) -> None:
-        if (current := disk_usage(dir)) >= start:
+        if (current := usage(dir)) >= start:
             LOGGER.info(f"start: {current} >= {start}")
             for subdir in find(os.path.join(dir, subdir_name_pat), type="d", sort="t"):
                 LOGGER.info(f"removing: {subdir}")
                 if not remove(subdir):
                     LOGGER.error(f"FAILED TO REMOVE: {subdir}")
-                if (current := disk_usage(dir)) < stop:
+                if (current := usage(dir)) < stop:
                     LOGGER.info(f"stop: {current} < {stop}")
                     break
             if current >= stop:
@@ -417,7 +418,7 @@ def write_file(file: str, s: str) -> int:
     return n_chars
 
 
-def disk_usage(dir: str) -> int:
+def usage(dir: str) -> int:
     usage: int = -1
 
     try:
@@ -633,47 +634,6 @@ def get_unrecordings(
     ]
 
 
-def init(cwd: str) -> Env | None:
-    env: Env | None = None
-
-    is_made_dir: bool = True
-    try:
-        env = Env(cwd)
-        for dir in [env.log_env.dir, env.storager_env.archive_dir]:
-            is_made_dir &= makedirs(dir)
-    except Exception as e:
-        is_made_dir = False
-        print(f"FAILED TO INITIALIZE: {cwd} - {e}", file=sys.stderr)
-
-    if env and is_made_dir:
-        handler = TimedRotatingFileHandler(
-            os.path.join(env.log_env.dir, C.LOG_NAME),
-            when=C.LOG_WHEN,
-            backupCount=env.log_env.log_backup,
-            interval=C.LOG_INTERVAL,
-            encoding=C.LOG_ENCODING,
-        )
-        handler.setFormatter(logging.Formatter(C.LOG_FORMATTER))
-        LOGGER.addHandler(handler)
-        LOGGER.setLevel(C.LOG_LEVEL)
-
-        stream_handler = RotatingFileHandler(
-            os.path.join(env.log_env.dir, C.STREAMLOG_NAME),
-            maxBytes=C.STREAMLOG_MAX_BYTES,
-            backupCount=env.log_env.streamlog_backup,
-            encoding=C.STREAMLOG_ENCODING,
-        )
-        stream_handler.setFormatter(logging.Formatter(C.STREAMLOG_FORMATTER))
-        STREAM_LOGGER.addHandler(stream_handler)
-        STREAM_LOGGER.setLevel(C.STREAMLOG_LEVEL)
-
-    else:
-        env = None
-        print("FAILED TO PREPARE DIRECTORIES", file=sys.stderr)
-
-    return env
-
-
 def status(env: Env, args: argparse.Namespace) -> int:
     result: int = E.NONE
 
@@ -690,12 +650,12 @@ def status(env: Env, args: argparse.Namespace) -> int:
     print(C.EMPTY_STR)
 
     print("[STORAGE]")
-    if (current := disk_usage(env.storager_env.video_dir)) >= 0:
-        print(f"Current usage : {current}%")
-        print(f"Remove start usage : {env.storager_env.remove_start}%")
-        print(f"Remove stop usage : {env.storager_env.remove_stop}%")
+    if (current := usage(env.storager_env.video_dir)) >= 0:
+        print(f"Current : {current}%")
+        print(f"Remove start : {env.storager_env.remove_start}%")
+        print(f"Remove stop : {env.storager_env.remove_stop}%")
     else:
-        LOGGER.error("FAILED TO GET USAGE")
+        LOGGER.error("FAILED TO GET DISK USAGE")
         result = result | E.GENERAL
     print(C.EMPTY_STR)
 
@@ -752,7 +712,7 @@ def stop(env: Env, args: argparse.Namespace) -> int:
 
     if isinstance(response := stop_request(env.lock), bool):
         if not response:
-            LOGGER.error("FAILED TO STOP ")
+            LOGGER.error("FAILED TO STOP")
             result = E.GENERAL
     else:
         LOGGER.warning("Not Running")
@@ -761,6 +721,58 @@ def stop(env: Env, args: argparse.Namespace) -> int:
     LOGGER.info(f"out({result})")
 
     return result
+
+
+def restart(env: Env, args: argparse.Namespace) -> int:
+    result: int = E.NONE
+
+    if (result := stop(env, args)) == E.NONE:
+        result = start(env, args)
+    else:
+        LOGGER.error("FAILED TO RESTART")
+
+    return result
+
+
+def init(cwd: str) -> Env | None:
+    env: Env | None = None
+
+    is_made_dir: bool = True
+    try:
+        env = Env(cwd)
+        for dir in [env.log_env.dir, env.storager_env.archive_dir]:
+            is_made_dir &= makedirs(dir)
+    except Exception as e:
+        is_made_dir = False
+        print(f"FAILED TO INITIALIZE: {cwd} - {e}", file=sys.stderr)
+
+    if env and is_made_dir:
+        handler = TimedRotatingFileHandler(
+            os.path.join(env.log_env.dir, C.LOG_NAME),
+            when=C.LOG_WHEN,
+            backupCount=env.log_env.log_backup,
+            interval=C.LOG_INTERVAL,
+            encoding=C.LOG_ENCODING,
+        )
+        handler.setFormatter(logging.Formatter(C.LOG_FORMATTER))
+        LOGGER.addHandler(handler)
+        LOGGER.setLevel(C.LOG_LEVEL)
+
+        stream_handler = RotatingFileHandler(
+            os.path.join(env.log_env.dir, C.STREAMLOG_NAME),
+            maxBytes=C.STREAMLOG_MAX_BYTES,
+            backupCount=env.log_env.streamlog_backup,
+            encoding=C.STREAMLOG_ENCODING,
+        )
+        stream_handler.setFormatter(logging.Formatter(C.STREAMLOG_FORMATTER))
+        STREAM_LOGGER.addHandler(stream_handler)
+        STREAM_LOGGER.setLevel(C.STREAMLOG_LEVEL)
+
+    else:
+        env = None
+        print("FAILED TO PREPARE DIRECTORIES", file=sys.stderr)
+
+    return env
 
 
 def main() -> int:
@@ -778,6 +790,8 @@ def main() -> int:
     subparser = subparsers.add_parser(C.SUBCOMMAND_STOP)
     subparser.set_defaults(func=stop)
 
+    subparser = subparsers.add_parser(C.SUBCOMMAND_RESTART)
+    subparser.set_defaults(func=restart)
     args = parser.parse_args()
 
     if isinstance(env := init(str(pathlib.Path(args.dir).resolve())), Env):
