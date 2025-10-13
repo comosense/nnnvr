@@ -41,7 +41,7 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
 **SECURITY WARNING:** Since `nnnvr.json` contains the RTSP URL (including user/password), it is **crucial** to set appropriate file permissions, such as `chmod 600 ./nnnvr.json`.
 
 * Example 1: Minimal `nnnvr.json`
-  ```JSON
+  ```JSON:nnnvr.json
   {
       "streams":
       [
@@ -54,7 +54,7 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
   ```
 
 * Example 2: Comprehensive `nnnvr.json`
-  ```JSON
+  ```JSON:nnnvr.json
   {
       "streams":
       [
@@ -99,20 +99,20 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
 #### Top-Level Configuration
 |Key|Required|Type|Description|Default|
 |:-|:-|:-|:-|:-|
-|`streams`|Yes|JSON array (See **Stream Configuration**) below|An array of IP camera stream configuration objects.|-|
+|`streams`|Yes|JSON array (See **Stream Configuration** below)|An array of IP camera stream configuration objects.|-|
 |`recBin`|No|String|The specified path to the `ffmpeg` executable.|`"ffmpeg"`|
-|`log`|No|JSON (See **Log Configuration**) below|Preferences for log file management.|(See **Log Configuration**)|
-|`video`|No|JSON (See **Video Configuration**) below|Preferences for video storage management.|(See **Video Configuration**)|
+|`log`|No|JSON (See **Log Configuration** below)|Preferences for log file management.|(See **Log Configuration** below)|
+|`video`|No|JSON (See **Video Configuration** below)|Preferences for video storage management.|(See **Video Configuration** below)|
 
 #### Stream Configuration ("stream" JSON)
 |Key|Required|Type|Description|Default|
 |:-|:-|:-|:-|:-|
 |`name`|Yes|String|A unique name for the stream (e.g., `cctv-X`). **Must be unique.**|-|
-|`url`|Yes|String|The RTSP stream URL (e.g., `"rtsp://..."`).|-|
+|`url`|Yes|String|The RTSP URL (e.g., `"rtsp://..."`).|-|
 |`ext`|No|String|Video file extension and container format (e.g., `mp4`, `ts`).|`"mp4"`|
-|`vcodec`|No|String|Video codec for recording (Equivalent to `ffmpeg`'s `-c:v` option).|(Depends on ffmpeg)|
-|`fps`|No|Integer|Frames per second for recording (Equivalent to `ffmpeg`'s `-r` option).|(Depends on ffmpeg)|
-|`acodec`|No|String|Audio codec for recording (Equivalent to `ffmpeg`'s `-c:a` option).|(Depends on ffmpeg)|
+|`vcodec`|No|String|Video codec for recording (Equivalent to `ffmpeg`'s `-c:v` option).|(Depends on `ffmpeg`)|
+|`fps`|No|Integer|Frames per second for recording (Equivalent to `ffmpeg`'s `-r` option).|(Depends on `ffmpeg`)|
+|`acodec`|No|String|Audio codec for recording (Equivalent to `ffmpeg`'s `-c:a` option).|(Depends on `ffmpeg`)|
 |`segmentSec`|No|Integer|Duration (in seconds) for splitting the recorded video files (Equivalent to `ffmpeg`'s `-segment_time` option).|`900`|
 
 #### Log Configuration ("log" JSON)
@@ -157,9 +157,11 @@ This command show the current `nnnvr` status (e.g., recording activity, disk usa
 The fastest way to run `nnnvr` as a persistent background service is by using `systemd` for daemonization.
 Create the file `nnnvr.service` based on your environment.
 * Example: `nnnvr.service`:
-  ```sh
+  ```sh:nnnvr.service
   [Unit]
   Description=No-Named NVR (nnnvr) Service
+  After=network.target
+
   [Service]
   Type=simple
   Restart=always
