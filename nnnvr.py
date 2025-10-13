@@ -23,7 +23,7 @@ from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 
 @dataclass(frozen=True)
 class Constant:
-    VERSION: str = "1.0.7-20251013"
+    VERSION: str = "1.0.8-20251013"
     BASE_FILE_NAME: str = os.path.splitext(os.path.basename(__file__))[0]
     PREF_FILE_NAME: str = BASE_FILE_NAME + ".json"
 
@@ -368,20 +368,16 @@ class Storager(Looper):
                 LOGGER.error(f"FAILED TO ARCHIVE: {src} -> {dst}")
 
     def _rm_subdir(self, dir: str, subdir_name_pat: str, start: int, stop: int) -> None:
-        total, used = usage(dir)
-        if (current := usage_rate(total, used)) >= start:
+        if (current := usage_rate(dir)) >= start:
             LOGGER.info(f"start: {current} >= {start}")
             for subdir in find(os.path.join(dir, subdir_name_pat), type="d", sort="t"):
                 LOGGER.info(f"removing: {subdir}")
-                if isinstance(rm_size := rmdir(subdir), int):
-                    used -= rm_size
-                else:
+                if not remove(subdir):
                     LOGGER.error(f"FAILED TO REMOVE: {subdir}")
-                if (current := usage_rate(total, used)) < stop:
+                if (current := usage_rate(dir)) < stop:
                     LOGGER.info(f"stop: {current} < {stop}")
                     break
-            total, used = usage(dir)
-            if (current := usage_rate(total, used)) >= stop:
+            if current >= stop:
                 LOGGER.warning(f"Not Reached: {current} >= {stop}")
 
 
@@ -422,47 +418,22 @@ def write_file(file: str, s: str) -> int:
     return n_chars
 
 
-def rm(path: str) -> int | None:
-    size: int | None = None
+def remove(path: str) -> bool:
+    result: bool = False
 
-    if os.path.isfile(path):
-        size = os.path.getsize(path)
-        try:
+    try:
+        if os.path.isfile(path):
             os.remove(path)
-        except Exception as e:
-            size = None
-            LOGGER.error(f"FAILED TO REMOVE FILE: {path} - {e}")
-    else:
-        LOGGER.error(f"FILE NOT FOUND: {path}")
+            result = True
+        elif os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+            result = True
+        else:
+            LOGGER.error(f"UNSUPPORTED PATH: {path}")
+    except Exception as e:
+        LOGGER.error(f"FAILED TO REMOVE FILE: {path} - {e}")
 
-    return size
-
-
-def rmdir(path: str) -> int | None:
-    size: int | None = None
-
-    if os.path.isdir(path):
-        temp_size: int | None = None
-        size = 0
-        try:
-            for entry in os.scandir(path):
-                if entry.is_file():
-                    temp_size = rm(entry.path)
-                elif entry.is_dir():
-                    temp_size = rmdir(entry.path)
-                else:
-                    LOGGER.error(f"UNEXPECTED PATH: {path}")
-
-                if isinstance(temp_size, int):
-                    size += temp_size
-
-            os.rmdir(path)
-        except Exception as e:
-            LOGGER.error(f"FAILED TO REMOVE DIRECTORY: {path} - {e}")
-    else:
-        LOGGER.error(f"DIRECTORY NOT FOUND: {path}")
-
-    return size
+    return result
 
 
 def makedirs(dir: str) -> bool:
@@ -528,20 +499,16 @@ def find(
     return do_sort([path for path in glob.glob(pat) if is_match(path)])
 
 
-def usage(dir: str) -> tuple[int, int]:
-    total: int = 0
-    used: int = 0
+def usage_rate(dir: str) -> int:
+    usage_rate = -1
 
     try:
         total, used, _ = shutil.disk_usage(dir)
+        usage_rate = int((used * 100) / total) if ((total > 0) and (used >= 0)) else -1
     except Exception as e:
-        LOGGER.error(f"FAILED TO GET USAGE: {dir} - {e}")
+        LOGGER.error(f"FAILED TO GET DISK USAGE: {dir} - {e}")
 
-    return (total, used)
-
-
-def usage_rate(total: int, used: int) -> int:
-    return int((used * 100) / total) if ((total > 0) and (used >= 0)) else -1
+    return usage_rate
 
 
 def acquire_lock(lock: str, pid: int) -> bool:
@@ -576,8 +543,8 @@ def update_lock(lock: str, pid: int) -> bool:
     return result
 
 
-def release_lock(lock: str) -> int | None:
-    return rm(lock)
+def release_lock(lock: str) -> bool:
+    return remove(lock)
 
 
 def stop_request(lock: str) -> bool | None:
@@ -593,7 +560,7 @@ def stop_request(lock: str) -> bool | None:
                     break
                 time.sleep(C.LOCK_CHECK_SLEEP)
             if not result and (read_file(lock) == str(C.PID_OF_NOBODY)):
-                result = isinstance(release_lock(lock), int)
+                result = release_lock(lock)
         else:
             LOGGER.error(f"FAILED STOP REQUEST: {lock}")
 
@@ -685,8 +652,7 @@ def status(env: Env, args: argparse.Namespace) -> int:
     print(C.EMPTY_STR)
 
     print("[STORAGE]")
-    total, used = usage(env.storager_env.video_dir)
-    if (current := usage_rate(total, used)) >= 0:
+    if (current := usage_rate(env.storager_env.video_dir)) >= 0:
         print(f"Current : {current}%")
         print(f"Remove start : {env.storager_env.remove_start}%")
         print(f"Remove stop : {env.storager_env.remove_stop}%")
