@@ -41,7 +41,7 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
 **SECURITY WARNING:** Since `nnnvr.json` contains the RTSP URL (including user/password), it is **crucial** to set appropriate file permissions, such as `chmod 600 ./nnnvr.json`.
 
 * Example 1: Minimal `nnnvr.json`
-  ```JSON:nnnvr.json
+  ```JSON
   {
       "streams":
       [
@@ -54,7 +54,7 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
   ```
 
 * Example 2: Comprehensive `nnnvr.json`
-  ```JSON:nnnvr.json
+  ```JSON
   {
       "streams":
       [
@@ -157,7 +157,7 @@ This command show the current `nnnvr` status (e.g., recording activity, disk usa
 The fastest way to run `nnnvr` as a persistent background service is by using `systemd` for daemonization.
 Create the file `nnnvr.service` based on your environment.
 * Example: `nnnvr.service`:
-  ```sh:nnnvr.service
+  ```sh
   [Unit]
   Description=No-Named NVR (nnnvr) Service
   After=network.target
