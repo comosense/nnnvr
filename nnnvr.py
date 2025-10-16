@@ -2,11 +2,9 @@
 
 import argparse
 import functools
-import glob
 import json
 import logging
 import os
-import pathlib
 import re
 import shutil
 import subprocess
@@ -19,17 +17,24 @@ from collections import UserDict
 from dataclasses import InitVar, dataclass, field
 from datetime import datetime
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
+from pathlib import Path
 
 
 @dataclass(frozen=True)
 class Constant:
-    VERSION: str = "1.0.8-20251013"
-    BASE_FILE_NAME: str = os.path.splitext(os.path.basename(__file__))[0]
+    VERSION: str = "1.0.9-20251016"
+    BASE_FILE_NAME: str = Path(__file__).stem
     PREF_FILE_NAME: str = BASE_FILE_NAME + ".json"
 
     SUBCOMMAND_START: str = "start"
     SUBCOMMAND_STOP: str = "stop"
     SUBCOMMAND_RESTART: str = "restart"
+
+    D: str = "[0-9]"
+    KB: int = 1024
+    SEC: int = 1
+    MIN: int = 60 * SEC
+    HOUR: int = 60 * MIN
 
     LOG_NAME: str = BASE_FILE_NAME + "_log"
     LOG_WHEN: str = "midnight"
@@ -39,27 +44,22 @@ class Constant:
     LOG_LEVEL: int = logging.DEBUG
 
     STREAMLOG_NAME: str = "stream_log"
-    STREAMLOG_MAX_BYTES: int = 100 * 1024
     STREAMLOG_ENCODING: str = LOG_ENCODING
     STREAMLOG_FORMATTER: str = "%(asctime)s: %(message)s"
     STREAMLOG_LEVEL: int = logging.WARNING
 
-    _D: str = "[0-9]"
     VFILE_NAME_DATE_FMT: str = "-%Y%m%d-%H%M%S"
-    VFILE_NAME_DATE_PAT: str = "-" + (_D * 8) + "-" + (_D * 6)
+    VFILE_NAME_DATE_PAT: str = "-" + (D * 8) + "-" + (D * 6)
     ARCHIVE_DIR_NAME: str = "archive"
-    ARCHIVE_SUBDIR_NAME_PAT: str = "*-" + (_D * 8)
+    ARCHIVE_SUBDIR_NAME_PAT: str = "*-" + (D * 8)
     ARCHIVE_SUBDIR_NAME_RE: str = r"^(.+-\d{8})-\d{6}\..+$"
-
-    SEC: int = 1
-    MIN_TO_SEC: int = 60 * SEC
-    HOUR_TO_SEC: int = 60 * MIN_TO_SEC
 
     MAIN_THREAD_SLEEP: float = float(1 * SEC)
     LOOPER_SLEEP: float = float(1 * SEC)
-    STORAGER_EXEC_PERIOD: float = float(5 * MIN_TO_SEC)
-    RECORDER_WD_PERIOD: float = float(1 * MIN_TO_SEC)
-    RECORDER_OBS_MARGIN: float = float(1 * MIN_TO_SEC)
+    STORAGER_EXEC_PERIOD: float = float(5 * MIN)
+    RECORDER_WD_PERIOD: float = float(1 * MIN)
+    RECORDER_OBS_MARGIN: float = float(1 * MIN)
+    RECBIN_TERM_TIMEOUT: float = float(5 * SEC)
 
     LOCK_FILE_NAME: str = BASE_FILE_NAME + ".lock"
     PID_OF_NOBODY: int = -1
@@ -75,10 +75,11 @@ class Constant:
 class Default:
     REC_BIN: str = "ffmpeg"
 
-    LOG_REL_DIR: str = os.path.join("log")
-    VIDEO_REL_DIR: str = os.path.join("video")
+    LOG_REL_DIR: Path = Path("log")
+    VIDEO_REL_DIR: Path = Path("video")
 
     LOG_BACKUP: int = 28
+    STREAMLOG_SIZE_KB: int = 100
     STREAMLOG_BACKUP: int = 5
 
     ARCHIVING_WAIT_HOUR: int = 6
@@ -102,13 +103,14 @@ class Error:
 C = Constant()
 D = Default()
 E = Error()
-T = typing.TypeVar("T")
 LOGGER = logging.getLogger(__name__)
 STREAM_LOGGER = logging.getLogger(__name__ + "stream")
+T = typing.TypeVar("T")
 
 
 class PrefDict(UserDict[typing.Any, typing.Any]):
     def tget(self, key: typing.Any, default: T) -> T:
+        value: typing.Any = None
         try:
             value = super().__getitem__(key)
         except Exception:
@@ -118,43 +120,43 @@ class PrefDict(UserDict[typing.Any, typing.Any]):
 
 @dataclass
 class LogEnv:
-    cwd: InitVar[str]
+    cwd: InitVar[Path]
     pref: InitVar[PrefDict]
 
-    dir: str = field(init=False)
+    log_dir: Path = field(init=False)
     log_backup: int = field(init=False)
+    streamlog_size: int = field(init=False)
     streamlog_backup: int = field(init=False)
 
-    def __post_init__(self, cwd: str, pref: PrefDict) -> None:
-        self.dir = pref.tget("dir", os.path.join(cwd, D.LOG_REL_DIR))
+    def __post_init__(self, cwd: Path, pref: PrefDict) -> None:
+        self.log_dir = Path(pref.tget("dir", str(cwd / D.LOG_REL_DIR)))
         self.log_backup = pref.tget("logBackup", D.LOG_BACKUP)
+        self.streamlog_size = pref.tget("streamlogSizeKb", D.STREAMLOG_SIZE_KB) * C.KB
         self.streamlog_backup = pref.tget("streamlogBackup", D.STREAMLOG_BACKUP)
 
 
 @dataclass
 class StoragerEnv:
-    cwd: InitVar[str]
+    cwd: InitVar[Path]
     pref: InitVar[PrefDict]
 
-    video_dir: str = field(init=False)
-    archive_dir: str = field(init=False)
+    video_dir: Path = field(init=False)
+    archive_dir: Path = field(init=False)
     archiving_wait: float = field(init=False)
-    g_vfile_pat: str = field(init=False)
+    g_vfile_name_pat: str = field(init=False)
     remove_start: int = field(init=False)
     remove_stop: int = field(init=False)
 
-    def __post_init__(self, cwd: str, pref: PrefDict) -> None:
-        self.video_dir = pref.tget("dir", os.path.join(cwd, D.VIDEO_REL_DIR))
-        self.archive_dir = os.path.join(self.video_dir, C.ARCHIVE_DIR_NAME)
+    def __post_init__(self, cwd: Path, pref: PrefDict) -> None:
+        self.video_dir = Path(pref.tget("dir", str(cwd / D.VIDEO_REL_DIR)))
+        self.archive_dir = self.video_dir / C.ARCHIVE_DIR_NAME
         self.archiving_wait = float(
-            pref.tget("archivingWaitHour", D.ARCHIVING_WAIT_HOUR) * C.HOUR_TO_SEC
+            pref.tget("archivingWaitHour", D.ARCHIVING_WAIT_HOUR) * C.HOUR
         )
-        self.g_vfile_pat = os.path.join(
-            self.video_dir, filename("*", C.VFILE_NAME_DATE_PAT, ext="*")
-        )
+        self.g_vfile_name_pat = filename("*", C.VFILE_NAME_DATE_PAT, ext="*")
 
-        start = pref.tget("removeStart", D.REMOVE_START)
-        stop = pref.tget("removeStop", D.REMOVE_STOP)
+        start: int = pref.tget("removeStart", D.REMOVE_START)
+        stop: int = pref.tget("removeStop", D.REMOVE_STOP)
         self.remove_start = max(min(start, D.REMOVE_TH_MAX), D.REMOVE_TH_MIN)
         self.remove_stop = min(max(stop, D.REMOVE_TH_MIN), self.remove_start)
 
@@ -162,35 +164,28 @@ class StoragerEnv:
 @dataclass
 class RecorderEnv:
     rec_bin: InitVar[str]
-    video_dir: InitVar[str]
+    dir: InitVar[Path]
     pref: InitVar[PrefDict]
 
     name: str = field(init=False)
-    vfile_pat: str = field(init=False, hash=False, compare=False)
+    video_dir: Path = field(init=False, hash=False, compare=False)
+    vfile_name_pat: str = field(init=False, hash=False, compare=False)
     obs_time: float = field(init=False, hash=False, compare=False)
     cmd: tuple[str, ...] = field(init=False, hash=False, compare=False)
 
-    def __post_init__(self, rec_bin: str, video_dir: str, pref: PrefDict) -> None:
-        name = pref.get("name")
-        url = pref.get("url")
+    def __post_init__(self, rec_bin: str, dir: Path, pref: PrefDict) -> None:
+        name: typing.Any = pref.get("name")
+        url: typing.Any = pref.get("url")
         if isinstance(name, str) and isinstance(url, str):
-            ext = pref.tget("ext", D.EXT)
-            vcodec = pref.get("vcodec")
-            fps = pref.get("fps")
-            acodec = pref.get("acodec")
-            segment_sec = pref.tget("segmentSec", D.SEGMENT_SEC)
-
-            vcodec_option = ["-c:v", vcodec] if isinstance(vcodec, str) else []
-            fps_option = ["-r", str(fps)] if isinstance(fps, int) else []
-            acodec_option = ["-c:a", acodec] if isinstance(acodec, str) else []
-            vfile = os.path.join(
-                video_dir, filename(name, C.VFILE_NAME_DATE_FMT, ext=ext)
-            )
+            ext: str = pref.tget("ext", D.EXT)
+            vcodec: typing.Any = pref.get("vcodec")
+            fps: typing.Any = pref.get("fps")
+            acodec: typing.Any = pref.get("acodec")
+            segment_sec: int = pref.tget("segmentSec", D.SEGMENT_SEC)
 
             self.name = name
-            self.vfile_pat = os.path.join(
-                video_dir, filename(name, C.VFILE_NAME_DATE_PAT, ext=ext)
-            )
+            self.video_dir = dir
+            self.vfile_name_pat = filename(name, C.VFILE_NAME_DATE_PAT, ext=ext)
             self.obs_time = float(segment_sec) + C.RECORDER_OBS_MARGIN
             self.cmd = tuple(
                 [rec_bin]
@@ -198,15 +193,15 @@ class RecorderEnv:
                 + ["-hide_banner"]
                 + ["-loglevel", "warning"]
                 + ["-i", url]
-                + vcodec_option
-                + fps_option
-                + acodec_option
+                + (["-c:v", vcodec] if isinstance(vcodec, str) else [])
+                + (["-r", str(fps)] if isinstance(fps, int) else [])
+                + (["-c:a", acodec] if isinstance(acodec, str) else [])
                 + ["-f", "segment"]
                 + ["-segment_time", str(segment_sec)]
                 + ["-reset_timestamps", "1"]
                 + ["-segment_atclocktime", "1"]
                 + ["-strftime", "1"]
-                + [vfile]
+                + [str(dir / filename(name, C.VFILE_NAME_DATE_FMT, ext=ext))]
             )
         else:
             raise TypeError(f"INVALID PARAMETER: {pref}")
@@ -214,30 +209,29 @@ class RecorderEnv:
 
 @dataclass
 class Env:
-    cwd: InitVar[str]
+    cwd: InitVar[Path]
 
-    lock: str = field(init=False)
+    lock: Path = field(init=False)
     log_env: LogEnv = field(init=False)
     storager_env: StoragerEnv = field(init=False)
     recorder_envs: list[RecorderEnv] = field(init=False)
 
-    def __post_init__(self, cwd: str) -> None:
-        with open(os.path.join(cwd, C.PREF_FILE_NAME)) as f:
-            pref = PrefDict(json.load(f))
+    def __post_init__(self, cwd: Path) -> None:
+        pref: PrefDict = PrefDict(json.loads(read_text(cwd / C.PREF_FILE_NAME)))
 
-        self.lock = os.path.join(cwd, C.LOCK_FILE_NAME)
+        self.lock = cwd / C.LOCK_FILE_NAME
         self.log_env = LogEnv(cwd, PrefDict(pref.get("log")))
         self.storager_env = StoragerEnv(cwd, PrefDict(pref.get("video")))
 
-        rec_bin = pref.tget("recBin", D.REC_BIN)
+        rec_bin: str = pref.tget("recBin", D.REC_BIN)
         seen: list[str] = []
-        self.recorder_envs = []
-        for stream in pref.get("streams", []):
-            if isinstance(name := stream.get("name"), str) and name not in seen:
-                seen.append(name)
-                self.recorder_envs.append(
-                    RecorderEnv(rec_bin, self.storager_env.video_dir, PrefDict(stream))
-                )
+        self.recorder_envs = [
+            RecorderEnv(rec_bin, self.storager_env.video_dir, PrefDict(stream))
+            for stream in pref.get("streams", [])
+            if isinstance(name := stream.get("name"), str)
+            and (name not in seen)
+            and (not seen.append(name))
+        ]
 
 
 class Looper(threading.Thread):
@@ -249,22 +243,22 @@ class Looper(threading.Thread):
 
     def run(self) -> None:
         self.reset_elapsed()
-        self.__initial__()
+        self._setup()
         while self._caller.is_alive() and (not self._is_stopping):
-            self.__loop__()
+            self._loop()
             time.sleep(C.LOOPER_SLEEP)
-        self.__final__()
+        self._teardown()
 
     @abstractmethod
-    def __initial__(self) -> None:
+    def _setup(self) -> None:
         pass
 
     @abstractmethod
-    def __loop__(self) -> None:
+    def _loop(self) -> None:
         pass
 
     @abstractmethod
-    def __final__(self) -> None:
+    def _teardown(self) -> None:
         pass
 
     @property
@@ -278,64 +272,15 @@ class Looper(threading.Thread):
         self._is_stopping = True
 
 
-class Recorder(Looper):
-    def __init__(self, caller: threading.Thread, env: RecorderEnv) -> None:
-        self._env: RecorderEnv = env
-        self._popen: subprocess.Popen[str] | None = None
-        self._stream_logger_thread: threading.Thread | None = None
-        super().__init__(caller)
-
-    def __initial__(self) -> None:
-        self._popen = subprocess.Popen(
-            self._env.cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
-        )
-        LOGGER.info(f"start Recorder: {self._env.name}")
-
-        self._stream_logger_thread = threading.Thread(
-            target=self._stream_logger, args=(self._popen, self._env.name), daemon=True
-        )
-        self._stream_logger_thread.start()
-
-    def __loop__(self) -> None:
-        if self._popen and (self._popen.poll() is None):
-            if self.elapsed >= C.RECORDER_WD_PERIOD:
-                if not is_recording(self._env.vfile_pat, self._env.obs_time):
-                    LOGGER.error(f"KILL INACTIVE STREAM: {self._env.name}")
-                    self.send_stop()
-                self.reset_elapsed()
-        else:
-            self.send_stop()
-
-    def __final__(self) -> None:
-        returncode: int | None = None
-        if self._popen:
-            self._popen.kill()
-            returncode = self._popen.wait()
-        LOGGER.info(f"stop Recorder: {self._env.name}({returncode})")
-
-        if self._stream_logger_thread:
-            self._stream_logger_thread.join()
-
-    def _stream_logger(self, popen: subprocess.Popen[str], stream_name: str) -> None:
-        LOGGER.info("start stream logger")
-        while popen.stderr and (popen.poll() is None):
-            STREAM_LOGGER.warning(f"[{stream_name}] {popen.stderr.readline().rstrip()}")
-        LOGGER.info("stop stream logger")
-
-    @property
-    def env(self) -> RecorderEnv:
-        return self._env
-
-
 class Storager(Looper):
     def __init__(self, caller: threading.Thread, env: StoragerEnv) -> None:
         self._env: StoragerEnv = env
         super().__init__(caller)
 
-    def __initial__(self) -> None:
+    def _setup(self) -> None:
         LOGGER.info("start Storager")
 
-    def __loop__(self) -> None:
+    def _loop(self) -> None:
         if self.elapsed >= C.STORAGER_EXEC_PERIOD:
             self._rm_subdir(
                 self._env.archive_dir,
@@ -344,33 +289,38 @@ class Storager(Looper):
                 self._env.remove_stop,
             )
             self._to_subdir(
-                self._env.g_vfile_pat,
+                self._env.g_vfile_name_pat,
+                self._env.video_dir,
                 self._env.archiving_wait,
                 self._env.archive_dir,
                 C.ARCHIVE_SUBDIR_NAME_RE,
             )
             self.reset_elapsed()
 
-    def __final__(self) -> None:
+    def _teardown(self) -> None:
         LOGGER.info("stop Storager")
 
-    def _dst(self, file: str, dir: str, subdir_name_re: str) -> str | None:
-        file_name = os.path.basename(file)
-        match = re.search(subdir_name_re, file_name)
-        return os.path.join(dir, match.group(1), file_name) if match else None
+    def _dst(self, file_name: str, dir: Path, subdir_name_re: str) -> Path | None:
+        match: re.Match[str] | None = re.search(subdir_name_re, file_name)
+        return (dir / match.group(1) / file_name) if (match is not None) else None
 
-    def _to_subdir(self, pat: str, mtime: float, dir: str, subdir_name_re: str) -> None:
+    def _to_subdir(
+        self, pat: str, src_dir: Path, mtime: float, dst_dir: Path, subdir_name_re: str
+    ) -> None:
         for src, dst in [
-            (file, self._dst(file, dir, subdir_name_re)) for file in find(pat, mtime)
+            (file, self._dst(file.name, dst_dir, subdir_name_re))
+            for file in find(pat, src_dir, mtime)
         ]:
             LOGGER.info(f"archiving: {src} -> {dst}")
             if not move_file(src, dst):
                 LOGGER.error(f"FAILED TO ARCHIVE: {src} -> {dst}")
 
-    def _rm_subdir(self, dir: str, subdir_name_pat: str, start: int, stop: int) -> None:
+    def _rm_subdir(
+        self, dir: Path, subdir_name_pat: str, start: int, stop: int
+    ) -> None:
         if (current := usage_rate(dir)) >= start:
             LOGGER.info(f"start: {current} >= {start}")
-            for subdir in find(os.path.join(dir, subdir_name_pat), type="d", sort="t"):
+            for subdir in find(subdir_name_pat, dir, type="d", sort="t"):
                 LOGGER.info(f"removing: {subdir}")
                 if not remove(subdir):
                     LOGGER.error(f"FAILED TO REMOVE: {subdir}")
@@ -381,87 +331,138 @@ class Storager(Looper):
                 LOGGER.warning(f"Not Reached: {current} >= {stop}")
 
 
+class Recorder(Looper):
+    def __init__(self, caller: threading.Thread, env: RecorderEnv) -> None:
+        self._env: RecorderEnv = env
+        self._popen: subprocess.Popen[str] | None = None
+        self._stream_logger_thread: threading.Thread | None = None
+        super().__init__(caller)
+
+    def _setup(self) -> None:
+        self._popen = subprocess.Popen(
+            self._env.cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
+        )
+        LOGGER.info(f"start Recorder: {self._env.name}")
+
+        self._stream_logger_thread = threading.Thread(
+            target=self._stream_logger, args=(self._popen, self._env.name), daemon=True
+        )
+        self._stream_logger_thread.start()
+
+    def _loop(self) -> None:
+        if (self._popen is not None) and (self._popen.poll() is None):
+            if self.elapsed >= C.RECORDER_WD_PERIOD:
+                if not is_recording(
+                    self._env.vfile_name_pat, self._env.video_dir, self._env.obs_time
+                ):
+                    LOGGER.error(f"KILL INACTIVE STREAM: {self._env.name}")
+                    self.send_stop()
+                self.reset_elapsed()
+        else:
+            self.send_stop()
+
+    def _teardown(self) -> None:
+        returncode: int | None = None
+        if self._popen is not None:
+            try:
+                self._popen.terminate()
+                returncode = self._popen.wait(timeout=C.RECBIN_TERM_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                LOGGER.warning(f"Could Not Terminate, Killing: {self._env.name}")
+                self._popen.kill()
+                returncode = self._popen.wait()
+        LOGGER.info(f"stop Recorder: {self._env.name}({returncode})")
+
+        if self._stream_logger_thread is not None:
+            self._stream_logger_thread.join()
+
+    def _stream_logger(self, popen: subprocess.Popen[str], stream_name: str) -> None:
+        LOGGER.info("start stream logger")
+        while (popen.stderr is not None) and (popen.poll() is None):
+            STREAM_LOGGER.warning(f"[{stream_name}] {popen.stderr.readline().rstrip()}")
+        LOGGER.info("stop stream logger")
+
+    @property
+    def env(self) -> RecorderEnv:
+        return self._env
+
+
 LooperT = typing.TypeVar("LooperT", bound=Looper)
 
 
-def filename(*parts: str, ext: str) -> str:
+def filename(*parts: str, ext: str | None = None) -> str:
     filename = C.EMPTY_STR
 
     for part in parts:
         filename += part
-    filename += "." + ext
+    if (ext is not None) and (len(ext) >= 1):
+        filename += "." + ext
 
     return filename
 
 
-def read_file(file: str) -> str:
-    chars: str = C.EMPTY_STR
+def read_text(file: Path) -> str:
+    text: str = C.EMPTY_STR
 
     try:
-        with open(file) as f:
-            chars = f.read()
+        text = file.read_text()
     except Exception as e:
         LOGGER.error(f"FAILED TO READ: {file} - {e}")
 
-    return chars
+    return text
 
 
-def write_file(file: str, s: str) -> int:
-    n_chars: int = -1
+def write_text(file: Path, text: str) -> int:
+    size: int = -1
 
     try:
-        with open(file, "w") as f:
-            n_chars = f.write(s)
+        size = file.write_text(text)
     except Exception as e:
         LOGGER.error(f"FAILED TO WRITE: {file} - {e}")
 
-    return n_chars
+    return size
 
 
-def remove(path: str) -> bool:
-    result: bool = False
+def remove(path: Path) -> bool:
+    is_success: bool = False
 
     try:
-        if os.path.isfile(path):
-            os.remove(path)
-            result = True
-        elif os.path.isdir(path):
+        if path.is_file():
+            path.unlink()
+            is_success = True
+        elif path.is_dir():
             shutil.rmtree(path, ignore_errors=True)
-            result = True
+            is_success = True
         else:
             LOGGER.error(f"UNSUPPORTED PATH: {path}")
     except Exception as e:
         LOGGER.error(f"FAILED TO REMOVE FILE: {path} - {e}")
 
-    return result
+    return is_success
 
 
-def makedirs(dir: str) -> bool:
-    result: bool = False
+def mkdir(dir: Path) -> bool:
+    is_success: bool = False
 
-    if not os.path.isdir(dir):
+    if dir.is_dir():
+        is_success = True
+    else:
         try:
-            os.makedirs(dir, exist_ok=True)
-            result = True
+            dir.mkdir(parents=True, exist_ok=True)
+            is_success = True
         except Exception as e:
             LOGGER.error(f"FAILED TO MAKE DIRECTORY: {dir} - {e}")
-    else:
-        result = True
 
-    return result
+    return is_success
 
 
-def move_file(src: str | None, dst: str | None) -> str | None:
-    path: str | None = None
+def move_file(src: Path | None, dst: Path | None) -> bool:
+    is_success: bool = False
 
-    if isinstance(src, str) and isinstance(dst, str):
-        if (not os.path.isdir(dst)) and makedirs(os.path.dirname(dst)):
-            try:
-                path = shutil.move(src, dst)
-            except Exception as e:
-                LOGGER.error(f"FAILED TO MOVE: {src} -> {dst} - {e}")
+    if (src is not None) and (dst is not None) and src.is_file() and mkdir(dst.parent):
+        is_success = dst == shutil.move(src, dst)
 
-    return path
+    return is_success
 
 
 FindType = typing.Literal["f", "d", "fd"]
@@ -469,114 +470,130 @@ FindSort = typing.Literal["n", "t"]
 
 
 def find(
-    pat: str, mtime: float | None = None, type: FindType = "f", sort: FindSort = "n"
-) -> list[str]:
-    def _mtime_sorted(_paths: list[str]) -> list[str]:
-        return sorted(_paths, key=os.path.getmtime)
+    pat: str,
+    parent: Path,
+    mtime: float | None = None,
+    type: FindType = "f",
+    sort: FindSort = "n",
+) -> list[Path]:
+    def _bool(_path: Path) -> bool:
+        return bool(_path)
 
-    def _is_mtime_match(_basetime: float, _mtime: float, _path: str) -> bool:
-        return ((diff := _basetime - os.path.getmtime(_path)) >= 0) and (
+    def _is_file(_path: Path) -> bool:
+        return _path.is_file()
+
+    def _is_dir(_path: Path) -> bool:
+        return _path.is_dir()
+
+    def _is_mtime(_basetime: float, _mtime: float, _path: Path) -> bool:
+        return ((diff := (_basetime - _path.stat().st_mtime)) >= 0) and (
             ((_mtime >= 0) and (diff >= _mtime)) or ((_mtime < 0) and (diff <= -_mtime))
         )
 
-    do_sort = sorted
-    if sort == "t":
-        do_sort = _mtime_sorted
+    def _mtime_sort(_paths: list[Path]) -> list[Path]:
+        return sorted(_paths, key=lambda _path: _path.stat().st_mtime)
 
-    is_type_match = bool
+    is_type: typing.Callable[[Path], bool] = _bool
     if type == "f":
-        is_type_match = os.path.isfile
+        is_type = _is_file
     elif type == "d":
-        is_type_match = os.path.isdir
+        is_type = _is_dir
 
-    is_mtime_match = bool
-    if mtime:
-        is_mtime_match = functools.partial(_is_mtime_match, time.time(), mtime)
+    is_time: typing.Callable[[Path], bool] = _bool
+    if mtime is not None:
+        is_time = functools.partial(_is_mtime, time.time(), mtime)
 
-    def is_match(path: str) -> bool:
-        return is_type_match(path) and is_mtime_match(path)
+    do_sort: typing.Callable[[list[Path]], list[Path]] = sorted
+    if sort == "t":
+        do_sort = _mtime_sort
 
-    return do_sort([path for path in glob.glob(pat) if is_match(path)])
+    return do_sort(
+        [path for path in parent.glob(pat) if (is_type(path) and is_time(path))]
+    )
 
 
-def usage_rate(dir: str) -> int:
-    usage_rate = -1
+def usage_rate(dir: Path) -> int:
+    usage_rate: int = -1
 
     try:
         total, used, _ = shutil.disk_usage(dir)
-        usage_rate = int((used * 100) / total) if ((total > 0) and (used >= 0)) else -1
+        if (total > 0) and (used >= 0):
+            usage_rate = int((used * 100) / total)
     except Exception as e:
         LOGGER.error(f"FAILED TO GET DISK USAGE: {dir} - {e}")
 
     return usage_rate
 
 
-def acquire_lock(lock: str, pid: int) -> bool:
-    result: bool = False
+def is_running(lock: Path) -> bool:
+    is_running: bool = False
 
-    is_acquirable: bool = True
-    if os.path.isfile(lock) and (write_file(lock, C.EMPTY_STR) == len(C.EMPTY_STR)):
-        t = time.time()
-        while (time.time() - t) < C.LOCK_EXPIRY:
-            if os.path.getsize(lock) > 0:
-                is_acquirable = False
-                break
-            time.sleep(C.LOCK_CHECK_SLEEP)
+    if lock.is_file():
+        if write_text(lock, C.EMPTY_STR) == len(C.EMPTY_STR):
+            t: float = time.time()
+            while (time.time() - t) < C.LOCK_EXPIRY:
+                if lock.stat().st_size > 0:
+                    is_running = True
+                    break
+                time.sleep(C.LOCK_CHECK_SLEEP)
+        else:
+            is_running = True
 
-    if is_acquirable:
-        result = write_file(lock, str(pid)) > 0
-
-    return result
+    return is_running
 
 
-def update_lock(lock: str, pid: int) -> bool:
-    result: bool = False
+def acquire_lock(lock: Path, pid: int) -> bool:
+    return (write_text(lock, str(pid)) > 0) if not is_running(lock) else False
 
-    if (pid_str := read_file(lock)) == C.EMPTY_STR:
-        result = write_file(lock, str(pid)) > 0
+
+def update_lock(lock: Path, pid: int) -> bool:
+    is_success: bool = False
+
+    if (pid_str := read_text(lock)) == C.EMPTY_STR:
+        is_success = write_text(lock, str(pid)) > 0
     else:
         try:
-            result = int(pid_str) == pid
+            is_success = int(pid_str) == pid
         except Exception as e:
             LOGGER.error(f"UNEXPECTED CONTENT IN LOCK: {pid_str} - {e}")
 
-    return result
+    return is_success
 
 
-def release_lock(lock: str) -> bool:
+def release_lock(lock: Path) -> bool:
     return remove(lock)
 
 
-def stop_request(lock: str) -> bool | None:
-    result: bool | None = None
+def stop_request(lock: Path) -> bool | None:
+    is_success: bool | None = None
 
-    if os.path.isfile(lock):
-        result = False
-        if write_file(lock, str(C.PID_OF_NOBODY)) > 0:
-            t = time.time()
+    if lock.is_file():
+        is_success = False
+        if write_text(lock, str(C.PID_OF_NOBODY)) > 0:
+            t: float = time.time()
             while (time.time() - t) < C.STOP_REQUEST_TIMEOUT:
-                if not os.path.isfile(lock):
-                    result = True
+                if not lock.exists():
+                    is_success = True
                     break
                 time.sleep(C.LOCK_CHECK_SLEEP)
-            if not result and (read_file(lock) == str(C.PID_OF_NOBODY)):
-                result = release_lock(lock)
+            if not is_success and (read_text(lock) == str(C.PID_OF_NOBODY)):
+                is_success = release_lock(lock)
         else:
             LOGGER.error(f"FAILED STOP REQUEST: {lock}")
 
-    return result
+    return is_success
 
 
-def is_recording(vfile_pat: str, observation_time: float) -> bool:
-    return bool(find(vfile_pat, -observation_time))
+def is_recording(vfile_name_pat: str, video_dir: Path, observation_time: float) -> bool:
+    return bool(find(vfile_name_pat, video_dir, -observation_time))
 
 
 def start_looper(looper: LooperT | None) -> LooperT | None:
-    return looper if looper and (not looper.start()) else None
+    return looper if ((looper is not None) and (not looper.start())) else None
 
 
 def stop_looper(looper: Looper | None) -> None:
-    if looper:
+    if looper is not None:
         looper.send_stop()
         try:
             looper.join()
@@ -597,7 +614,7 @@ def stop_loopers(loopers: list[LooperT]) -> None:
 
 
 def is_alive(looper: Looper | None) -> bool:
-    return looper.is_alive() if looper else False
+    return looper.is_alive() if (looper is not None) else False
 
 
 def get_alive_loopers(loopers: list[LooperT]) -> list[LooperT]:
@@ -628,7 +645,9 @@ def get_unwanted(
 def get_unrecordings(
     recorder_envs: list[RecorderEnv], recorders: list[Recorder]
 ) -> list[RecorderEnv]:
-    recording_envs = [recorder.env for recorder in recorders if recorder]
+    recording_envs: list[RecorderEnv] = [
+        recorder.env for recorder in recorders if recorder
+    ]
     return [
         recorder_env
         for recorder_env in recorder_envs
@@ -642,13 +661,17 @@ def status(env: Env, args: argparse.Namespace) -> int:
     print(datetime.now().strftime(C.DATE_FORMAT))
     print(C.EMPTY_STR)
 
-    print("[STREAM]")
-    for recorder_env in env.recorder_envs:
-        if is_recording(recorder_env.vfile_pat, recorder_env.obs_time):
-            print(f"{recorder_env.name} : OK")
-        else:
-            print(f"{recorder_env.name} : NG")
-            result = result | E.STREAM
+    if is_running(env.lock):
+        print("[STREAM]")
+        for renv in env.recorder_envs:
+            if is_recording(renv.vfile_name_pat, renv.video_dir, renv.obs_time):
+                print(f"{renv.name} : OK")
+            else:
+                print(f"{renv.name} : NG")
+                result = result | E.STREAM
+    else:
+        print("NOT RUNNING")
+        result = result | E.GENERAL
     print(C.EMPTY_STR)
 
     print("[STORAGE]")
@@ -657,6 +680,7 @@ def status(env: Env, args: argparse.Namespace) -> int:
         print(f"Remove start : {env.storager_env.remove_start}%")
         print(f"Remove stop : {env.storager_env.remove_stop}%")
     else:
+        print("FAILED TO GET DISK USAGE")
         LOGGER.error("FAILED TO GET DISK USAGE")
         result = result | E.GENERAL
     print(C.EMPTY_STR)
@@ -713,7 +737,7 @@ def stop(env: Env, args: argparse.Namespace) -> int:
 
     LOGGER.info("in")
 
-    if isinstance(response := stop_request(env.lock), bool):
+    if (response := stop_request(env.lock)) is not None:
         if not response:
             LOGGER.error("FAILED TO STOP")
             result = E.GENERAL
@@ -737,21 +761,21 @@ def restart(env: Env, args: argparse.Namespace) -> int:
     return result
 
 
-def init(cwd: str) -> Env | None:
+def init(cwd: Path) -> Env | None:
     env: Env | None = None
 
-    is_made_dir: bool = True
+    is_dir_set: bool = True
     try:
         env = Env(cwd)
-        for dir in [env.log_env.dir, env.storager_env.archive_dir]:
-            is_made_dir &= makedirs(dir)
+        for dir in [env.log_env.log_dir, env.storager_env.archive_dir]:
+            is_dir_set &= mkdir(dir)
     except Exception as e:
-        is_made_dir = False
+        is_dir_set = False
         print(f"FAILED TO INITIALIZE: {cwd} - {e}", file=sys.stderr)
 
-    if env and is_made_dir:
+    if (env is not None) and is_dir_set:
         handler = TimedRotatingFileHandler(
-            os.path.join(env.log_env.dir, C.LOG_NAME),
+            env.log_env.log_dir / C.LOG_NAME,
             when=C.LOG_WHEN,
             backupCount=env.log_env.log_backup,
             interval=C.LOG_INTERVAL,
@@ -762,8 +786,8 @@ def init(cwd: str) -> Env | None:
         LOGGER.setLevel(C.LOG_LEVEL)
 
         stream_handler = RotatingFileHandler(
-            os.path.join(env.log_env.dir, C.STREAMLOG_NAME),
-            maxBytes=C.STREAMLOG_MAX_BYTES,
+            env.log_env.log_dir / C.STREAMLOG_NAME,
+            maxBytes=env.log_env.streamlog_size,
             backupCount=env.log_env.streamlog_backup,
             encoding=C.STREAMLOG_ENCODING,
         )
@@ -781,7 +805,7 @@ def init(cwd: str) -> Env | None:
 def main() -> int:
     result: int = E.NONE
 
-    parser = argparse.ArgumentParser()
+    parser: argparse.ArgumentParser = argparse.ArgumentParser()
     parser.set_defaults(func=status)
     parser.add_argument("-v", "--version", action="version", version=C.VERSION)
     parser.add_argument("-d", "--dir", default=os.getcwd())
@@ -795,9 +819,9 @@ def main() -> int:
 
     subparser = subparsers.add_parser(C.SUBCOMMAND_RESTART)
     subparser.set_defaults(func=restart)
-    args = parser.parse_args()
 
-    if isinstance(env := init(str(pathlib.Path(args.dir).resolve())), Env):
+    args: argparse.Namespace = parser.parse_args()
+    if (env := init(Path(args.dir).resolve())) is not None:
         try:
             result = args.func(env, args)
         except Exception as e:

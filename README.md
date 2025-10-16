@@ -34,6 +34,7 @@ Place `nnnvr.py` in your desired working directory and grant it executable permi
   curl https://raw.githubusercontent.com/comosense/nnnvr/refs/tags/[VERSION]/nnnvr.py > nnnvr.py
   chmod +x ./nnnvr.py
   ```
+  Replace [VERSION] with the latest version tag from the releases page (e.g., 1.0.9). See: https://github.com/comosense/nnnvr/releases
 
 ### 2. `nnnvr.json`
 Create the configuration file, `nnnvr.json`, in the working directory, and adjust the settings to match your environment.
@@ -84,6 +85,7 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
       {
           "dir": "/PATH/TO/log",
           "logBackup": 14,
+          "streamlogSizeKb": 200,
           "streamlogBackup": 3
       },
       "video":
@@ -118,14 +120,15 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
 #### Log Configuration ("log" JSON)
 |Key|Required|Type|Description|Default|
 |:-|:-|:-|:-|:-|
-|`dir`|No|String|The specified path to the directory for log files.|`"(working directory)/log"`|
+|`dir`|No|String|The specified path to the directory for log files.|`"<working directory>/log"`|
 |`logBackup`|No|Integer|The number of main daily log files to keep.|`28`|
-|`streamlogBackup`|No|Integer|The number of stream log files to keep (Stream logs roll over at 100KB).|`5`|
+|`streamlogSizeKb`|No|Integer|The maximum size (in KBytes) of a stream log file.|`100`|
+|`streamlogBackup`|No|Integer|The number of stream log files to keep (Stream logs roll over at `streamlogSizeKb`).|`5`|
 
 #### Video Storage Configuration ("video" JSON)
 |Key|Required|Type|Description|Default|
 |:-|:-|:-|:-|:-|
-|`dir`|No|String|The specified path to the directory for video files.|`"(working directory)/video"`|
+|`dir`|No|String|The specified path to the directory for video files.|`"<working directory>/video"`|
 |`archivingWaitHour`|No|Integer|Wait time (in hours) before archiving each video file.|`6`|
 |`removeStart`|No|Integer|The disk usage percentage threshold to start removing the oldest videos.|`99`|
 |`removeStop`|No|Integer|The disk usage percentage threshold to stop removing videos.|`99`|
