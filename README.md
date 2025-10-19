@@ -62,6 +62,7 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
           {
               "name": "cctv-X",
               "url": "rtsp://USER_X:PASS_X@XXX.XXX.XXX.XXX:XXX/streamX",
+              "transport": "tcp",
               "ext": "mp4",
               "vcodec": "libx264",
               "fps": 30,
@@ -75,6 +76,7 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
           {
               "name": "cctv-Z",
               "url": "rtsp://USER_Z:PASS_Z@ZZZ.ZZZ.ZZZ.ZZZ:ZZZ/streamZ",
+              "transport": "udp",
               "ext": "ts",
               "vcodec": "copy",
               "acodec": "copy"
@@ -111,7 +113,8 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
 |:-|:-|:-|:-|:-|
 |`name`|Yes|String|A unique name for the stream (e.g., `cctv-X`). **Must be unique.**|-|
 |`url`|Yes|String|The RTSP URL (e.g., `"rtsp://..."`).|-|
-|`ext`|No|String|Video file extension and container format (e.g., `mp4`, `ts`).|`"mp4"`|
+|`transport`|No|String|RTSP transport protocol (Equivalent to `ffmpeg`'s `-rtsp_transport` option, usually `"udp"` or `"tcp"`).|`"udp"`|
+|`ext`|No|String|Video file extension and container format (e.g., `"mp4"`, `"ts"`).|`"mp4"`|
 |`vcodec`|No|String|Video codec for recording (Equivalent to `ffmpeg`'s `-c:v` option).|(Depends on `ffmpeg`)|
 |`fps`|No|Integer|Frames per second for recording (Equivalent to `ffmpeg`'s `-r` option).|(Depends on `ffmpeg`)|
 |`acodec`|No|String|Audio codec for recording (Equivalent to `ffmpeg`'s `-c:a` option).|(Depends on `ffmpeg`)|
@@ -171,7 +174,6 @@ Create the file `nnnvr.service` based on your environment.
   WorkingDirectory=/WORK/DIR
   ExecStart=/PATH/TO/nnnvr.py start
   ExecStop=/PATH/TO/nnnvr.py stop
-  ExecReload=/PATH/TO/nnnvr.py restart
 
   [Install]
   WantedBy=multi-user.target

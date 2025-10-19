@@ -22,13 +22,12 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Constant:
-    VERSION: str = "1.0.9-20251016"
+    VERSION: str = "1.0.10-20251019"
     BASE_FILE_NAME: str = Path(__file__).stem
     PREF_FILE_NAME: str = BASE_FILE_NAME + ".json"
 
     SUBCOMMAND_START: str = "start"
     SUBCOMMAND_STOP: str = "stop"
-    SUBCOMMAND_RESTART: str = "restart"
 
     D: str = "[0-9]"
     KB: int = 1024
@@ -62,10 +61,11 @@ class Constant:
     RECBIN_TERM_TIMEOUT: float = float(5 * SEC)
 
     LOCK_FILE_NAME: str = BASE_FILE_NAME + ".lock"
-    PID_OF_NOBODY: int = -1
     LOCK_CHECK_SLEEP: float = MAIN_THREAD_SLEEP
-    LOCK_EXPIRY: float = LOCK_CHECK_SLEEP * 5
-    STOP_REQUEST_TIMEOUT: float = float(10 * SEC)
+    LOCK_REQ_CHECK = "REQ_CHECK"
+    LOCK_REQ_STOP = "REQ_STOP"
+    LOCK_REQ_CHECK_TIMEOUT: float = LOCK_CHECK_SLEEP * 5
+    LOCK_REQ_STOP_TIMEOUT: float = LOCK_CHECK_SLEEP * 5
 
     DATE_FORMAT: str = "%Y/%m/%d %H:%M:%S"
     EMPTY_STR: str = ""
@@ -88,8 +88,9 @@ class Default:
     REMOVE_START: int = REMOVE_TH_MAX
     REMOVE_STOP: int = REMOVE_START
 
-    SEGMENT_SEC: int = 900
+    TRANSPORT: str = "udp"
     EXT: str = "mp4"
+    SEGMENT_SEC: int = 900
 
 
 @dataclass(frozen=True)
@@ -177,6 +178,7 @@ class RecorderEnv:
         name: typing.Any = pref.get("name")
         url: typing.Any = pref.get("url")
         if isinstance(name, str) and isinstance(url, str):
+            transport: str = pref.tget("transport", D.TRANSPORT)
             ext: str = pref.tget("ext", D.EXT)
             vcodec: typing.Any = pref.get("vcodec")
             fps: typing.Any = pref.get("fps")
@@ -192,6 +194,7 @@ class RecorderEnv:
                 + ["-nostdin"]
                 + ["-hide_banner"]
                 + ["-loglevel", "warning"]
+                + ["-rtsp_transport", transport]
                 + ["-i", url]
                 + (["-c:v", vcodec] if isinstance(vcodec, str) else [])
                 + (["-r", str(fps)] if isinstance(fps, int) else [])
@@ -224,14 +227,12 @@ class Env:
         self.storager_env = StoragerEnv(cwd, PrefDict(pref.get("video")))
 
         rec_bin: str = pref.tget("recBin", D.REC_BIN)
-        seen: list[str] = []
-        self.recorder_envs = [
-            RecorderEnv(rec_bin, self.storager_env.video_dir, PrefDict(stream))
-            for stream in pref.get("streams", [])
-            if isinstance(name := stream.get("name"), str)
-            and (name not in seen)
-            and (not seen.append(name))
-        ]
+        e: dict[str, RecorderEnv] = {}
+        for stream in pref.get("streams", []):
+            stream_pref: PrefDict = PrefDict(stream)
+            if isinstance(name := stream_pref.get("name"), str):
+                e[name] = RecorderEnv(rec_bin, self.storager_env.video_dir, stream_pref)
+        self.recorder_envs = list(e.values())
 
 
 class Looper(threading.Thread):
@@ -340,7 +341,11 @@ class Recorder(Looper):
 
     def _setup(self) -> None:
         self._popen = subprocess.Popen(
-            self._env.cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
+            self._env.cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
         )
         LOGGER.info(f"start Recorder: {self._env.name}")
 
@@ -529,10 +534,10 @@ def is_running(lock: Path) -> bool:
     is_running: bool = False
 
     if lock.is_file():
-        if write_text(lock, C.EMPTY_STR) == len(C.EMPTY_STR):
+        if write_text(lock, C.LOCK_REQ_CHECK) == len(C.LOCK_REQ_CHECK):
             t: float = time.time()
-            while (time.time() - t) < C.LOCK_EXPIRY:
-                if lock.stat().st_size > 0:
+            while (time.time() - t) < C.LOCK_REQ_CHECK_TIMEOUT:
+                if read_text(lock) != C.LOCK_REQ_CHECK:
                     is_running = True
                     break
                 time.sleep(C.LOCK_CHECK_SLEEP)
@@ -547,17 +552,19 @@ def acquire_lock(lock: Path, pid: int) -> bool:
 
 
 def update_lock(lock: Path, pid: int) -> bool:
-    is_success: bool = False
+    is_updated: bool = False
 
-    if (pid_str := read_text(lock)) == C.EMPTY_STR:
-        is_success = write_text(lock, str(pid)) > 0
+    lock_text = read_text(lock)
+    if lock_text == str(pid):
+        is_updated = True
+    elif lock_text == C.LOCK_REQ_CHECK:
+        is_updated = write_text(lock, str(pid)) > 0
+    elif lock_text == C.LOCK_REQ_STOP:
+        pass
     else:
-        try:
-            is_success = int(pid_str) == pid
-        except Exception as e:
-            LOGGER.error(f"UNEXPECTED CONTENT IN LOCK: {pid_str} - {e}")
+        LOGGER.error(f"UNEXPECTED TEXT IN LOCK: {lock_text}")
 
-    return is_success
+    return is_updated
 
 
 def release_lock(lock: Path) -> bool:
@@ -569,14 +576,14 @@ def stop_request(lock: Path) -> bool | None:
 
     if lock.is_file():
         is_success = False
-        if write_text(lock, str(C.PID_OF_NOBODY)) > 0:
+        if write_text(lock, str(C.LOCK_REQ_STOP)) == len(C.LOCK_REQ_STOP):
             t: float = time.time()
-            while (time.time() - t) < C.STOP_REQUEST_TIMEOUT:
+            while (time.time() - t) < C.LOCK_REQ_STOP_TIMEOUT:
                 if not lock.exists():
                     is_success = True
                     break
                 time.sleep(C.LOCK_CHECK_SLEEP)
-            if not is_success and (read_text(lock) == str(C.PID_OF_NOBODY)):
+            if not is_success and (read_text(lock) == str(C.LOCK_REQ_STOP)):
                 is_success = release_lock(lock)
         else:
             LOGGER.error(f"FAILED STOP REQUEST: {lock}")
@@ -589,7 +596,10 @@ def is_recording(vfile_name_pat: str, video_dir: Path, observation_time: float) 
 
 
 def start_looper(looper: LooperT | None) -> LooperT | None:
-    return looper if ((looper is not None) and (not looper.start())) else None
+    if looper is not None:
+        looper.start()
+
+    return looper
 
 
 def stop_looper(looper: Looper | None) -> None:
@@ -601,14 +611,26 @@ def stop_looper(looper: Looper | None) -> None:
             pass
 
 
-def start_loopers(loopers: list[LooperT]) -> list[LooperT]:
-    return [looper for looper in loopers if not looper.start()]
+def start_loopers(loopers: list[LooperT] | list[LooperT | None]) -> list[LooperT]:
+    started_loopers: list[LooperT] = []
+
+    for looper in loopers:
+        if looper is not None:
+            looper.start()
+            started_loopers.append(looper)
+
+    return started_loopers
 
 
-def stop_loopers(loopers: list[LooperT]) -> None:
-    for stopping_looper in [looper for looper in loopers if not looper.send_stop()]:
+def stop_loopers(loopers: list[LooperT] | list[LooperT | None]) -> None:
+    stopping_loopers: list[LooperT] = []
+    for looper in loopers:
+        if looper is not None:
+            looper.send_stop()
+            stopping_loopers.append(looper)
+    for looper in stopping_loopers:
         try:
-            stopping_looper.join()
+            looper.join()
         except Exception:
             pass
 
@@ -639,7 +661,7 @@ def get_unwanted(
                 if len(duplicated_dict) > 1:
                     unwanted_dict |= duplicated_dict
 
-    return [record for record in unwanted_dict.values()]
+    return list(unwanted_dict.values())
 
 
 def get_unrecordings(
@@ -750,17 +772,6 @@ def stop(env: Env, args: argparse.Namespace) -> int:
     return result
 
 
-def restart(env: Env, args: argparse.Namespace) -> int:
-    result: int = E.NONE
-
-    if (result := stop(env, args)) == E.NONE:
-        result = start(env, args)
-    else:
-        LOGGER.error("FAILED TO RESTART")
-
-    return result
-
-
 def init(cwd: Path) -> Env | None:
     env: Env | None = None
 
@@ -816,9 +827,6 @@ def main() -> int:
 
     subparser = subparsers.add_parser(C.SUBCOMMAND_STOP)
     subparser.set_defaults(func=stop)
-
-    subparser = subparsers.add_parser(C.SUBCOMMAND_RESTART)
-    subparser.set_defaults(func=restart)
 
     args: argparse.Namespace = parser.parse_args()
     if (env := init(Path(args.dir).resolve())) is not None:
