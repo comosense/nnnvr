@@ -16,24 +16,29 @@ from abc import abstractmethod
 from collections import UserDict
 from dataclasses import InitVar, dataclass, field
 from datetime import datetime
+from enum import Enum, auto
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
 
 
 @dataclass(frozen=True)
 class Constant:
-    VERSION: str = "1.0.10-20251019"
+    VERSION: str = "1.0.10-20251019-mod"
     BASE_FILE_NAME: str = Path(__file__).stem
     PREF_FILE_NAME: str = BASE_FILE_NAME + ".json"
-
-    SUBCOMMAND_START: str = "start"
-    SUBCOMMAND_STOP: str = "stop"
+    LOCK_FILE_NAME: str = BASE_FILE_NAME + ".lock"
 
     D: str = "[0-9]"
     KB: int = 1024
     SEC: int = 1
     MIN: int = 60 * SEC
     HOUR: int = 60 * MIN
+
+    SUBCOMMAND_START: str = "start"
+    SUBCOMMAND_STOP: str = "stop"
+
+    LOCK_CMD_TEXT_CHECK: str = "CHECK"
+    LOCK_CMD_TEXT_STOP: str = "STOP"
 
     LOG_NAME: str = BASE_FILE_NAME + "_log"
     LOG_WHEN: str = "midnight"
@@ -59,13 +64,6 @@ class Constant:
     RECORDER_WD_PERIOD: float = float(1 * MIN)
     RECORDER_OBS_MARGIN: float = float(1 * MIN)
     RECBIN_TERM_TIMEOUT: float = float(5 * SEC)
-
-    LOCK_FILE_NAME: str = BASE_FILE_NAME + ".lock"
-    LOCK_CHECK_SLEEP: float = MAIN_THREAD_SLEEP
-    LOCK_REQ_CHECK = "REQ_CHECK"
-    LOCK_REQ_STOP = "REQ_STOP"
-    LOCK_REQ_CHECK_TIMEOUT: float = LOCK_CHECK_SLEEP * 5
-    LOCK_REQ_STOP_TIMEOUT: float = LOCK_CHECK_SLEEP * 5
 
     DATE_FORMAT: str = "%Y/%m/%d %H:%M:%S"
     EMPTY_STR: str = ""
@@ -94,7 +92,7 @@ class Default:
 
 
 @dataclass(frozen=True)
-class Error:
+class ErrorCode:
     NONE: int = 0b00000000
     GENERAL: int = 0b00000001
     PREF: int = 0b00000010
@@ -103,7 +101,7 @@ class Error:
 
 C = Constant()
 D = Default()
-E = Error()
+E = ErrorCode()
 LOGGER = logging.getLogger(__name__)
 STREAM_LOGGER = logging.getLogger(__name__ + "stream")
 T = typing.TypeVar("T")
@@ -111,11 +109,7 @@ T = typing.TypeVar("T")
 
 class PrefDict(UserDict[typing.Any, typing.Any]):
     def tget(self, key: typing.Any, default: T) -> T:
-        value: typing.Any = None
-        try:
-            value = super().__getitem__(key)
-        except Exception:
-            value = default
+        value = self.get(key)
         return value if isinstance(value, type(default)) else default
 
 
@@ -214,25 +208,115 @@ class RecorderEnv:
 class Env:
     cwd: InitVar[Path]
 
-    lock: Path = field(init=False)
     log_env: LogEnv = field(init=False)
     storager_env: StoragerEnv = field(init=False)
     recorder_envs: list[RecorderEnv] = field(init=False)
 
     def __post_init__(self, cwd: Path) -> None:
-        pref: PrefDict = PrefDict(json.loads(read_text(cwd / C.PREF_FILE_NAME)))
+        if isinstance(json_str := read_text(cwd / C.PREF_FILE_NAME), str):
+            pref: PrefDict = PrefDict(json.loads(json_str))
 
-        self.lock = cwd / C.LOCK_FILE_NAME
-        self.log_env = LogEnv(cwd, PrefDict(pref.get("log")))
-        self.storager_env = StoragerEnv(cwd, PrefDict(pref.get("video")))
+            self.log_env = LogEnv(cwd, PrefDict(pref.get("log")))
+            self.storager_env = StoragerEnv(cwd, PrefDict(pref.get("video")))
 
-        rec_bin: str = pref.tget("recBin", D.REC_BIN)
-        e: dict[str, RecorderEnv] = {}
-        for stream in pref.get("streams", []):
-            stream_pref: PrefDict = PrefDict(stream)
-            if isinstance(name := stream_pref.get("name"), str):
-                e[name] = RecorderEnv(rec_bin, self.storager_env.video_dir, stream_pref)
-        self.recorder_envs = list(e.values())
+            rec_bin: str = pref.tget("recBin", D.REC_BIN)
+            recorder_env_dict: dict[str, RecorderEnv] = {}
+            for stream in pref.get("streams", []):
+                stream_pref: PrefDict = PrefDict(stream)
+                if isinstance(name := stream_pref.get("name"), str):
+                    recorder_env_dict[name] = RecorderEnv(
+                        rec_bin, self.storager_env.video_dir, stream_pref
+                    )
+            self.recorder_envs = list(recorder_env_dict.values())
+        else:
+            raise ValueError(f"INVALID JSON: {cwd / C.PREF_FILE_NAME}")
+
+
+class Lock:
+    @dataclass(frozen=True)
+    class _Cmd:
+        text: str
+        release: bool
+
+    class _Res(Enum):
+        NOT_AVAILABLE = auto()
+        FAILED = auto()
+        NO_RESPONSE = auto()
+        ACCEPTED = auto()
+
+    _CMD_CHECK: _Cmd = _Cmd(C.LOCK_CMD_TEXT_CHECK, False)
+    _CMD_STOP: _Cmd = _Cmd(C.LOCK_CMD_TEXT_STOP, True)
+    _SLEEP: float = C.MAIN_THREAD_SLEEP
+    _TIMEOUT: float = _SLEEP * 5
+
+    def __init__(self, cwd: Path) -> None:
+        self._lock_file = cwd / C.LOCK_FILE_NAME
+
+    def _issue(self, cmd: _Cmd) -> _Res:
+        res: Lock._Res = Lock._Res.NOT_AVAILABLE
+
+        if self._lock_file.is_file():
+            if write_text(self._lock_file, cmd.text):
+                res = Lock._Res.NO_RESPONSE
+                t: float = time.time()
+                while (time.time() - t) < Lock._TIMEOUT:
+                    if (cmd.release and (not self._lock_file.exists())) or (
+                        not cmd.release and (read_text(self._lock_file) != cmd.text)
+                    ):
+                        res = Lock._Res.ACCEPTED
+                        break
+            else:
+                LOGGER.error("FAILED TO OPERATE LOCK FILE")
+                res = Lock._Res.FAILED
+
+        return res
+
+    def check(self) -> bool | None:
+        result: bool | None = None
+
+        if (res := self._issue(Lock._CMD_CHECK)) == Lock._Res.ACCEPTED:
+            result = True
+        elif (res == Lock._Res.NOT_AVAILABLE) or (res == Lock._Res.NO_RESPONSE):
+            result = False
+
+        return result
+
+    def stop(self) -> bool | None:
+        result: bool | None = None
+
+        if (res := self._issue(Lock._CMD_STOP)) == Lock._Res.ACCEPTED:
+            result = True
+        elif res == Lock._Res.FAILED:
+            result = False
+        elif res == Lock._Res.NO_RESPONSE:
+            result = self.release()
+
+        return result
+
+    def acquire(self, pid: int) -> bool:
+        is_acquired: bool = False
+
+        if isinstance((result := self.check()), bool) and (not result):
+            is_acquired = write_text(self._lock_file, str(pid))
+
+        return is_acquired
+
+    def release(self) -> bool:
+        return remove(self._lock_file)
+
+    def update(self, pid: int) -> bool:
+        is_updated: bool = False
+
+        if (lock_text := read_text(self._lock_file)) == str(pid):
+            is_updated = True
+        elif lock_text == Lock._CMD_CHECK.text:
+            is_updated = write_text(self._lock_file, str(pid))
+        elif lock_text == Lock._CMD_STOP.text:
+            LOGGER.info("issued stop command")
+        else:
+            LOGGER.error(f"UNEXPECTED TEXT IN LOCK FILE: {lock_text}")
+
+        return is_updated
 
 
 class Looper(threading.Thread):
@@ -319,17 +403,27 @@ class Storager(Looper):
     def _rm_subdir(
         self, dir: Path, subdir_name_pat: str, start: int, stop: int
     ) -> None:
-        if (current := usage_rate(dir)) >= start:
+        if isinstance((current := usage_rate(dir)), int) and (current >= start):
             LOGGER.info(f"start: {current} >= {start}")
+
             for subdir in find(subdir_name_pat, dir, type="d", sort="t"):
                 LOGGER.info(f"removing: {subdir}")
+
                 if not remove(subdir):
                     LOGGER.error(f"FAILED TO REMOVE: {subdir}")
-                if (current := usage_rate(dir)) < stop:
+
+                if isinstance((current := usage_rate(dir)), int) and (current < stop):
                     LOGGER.info(f"stop: {current} < {stop}")
                     break
-            if current >= stop:
+                elif not isinstance(current, int):
+                    LOGGER.error("UNCONTINUABLE - DISK USAGE UNKNOWN")
+                    break
+
+            if isinstance(current, int) and (current >= stop):
                 LOGGER.warning(f"Not Reached: {current} >= {stop}")
+
+        elif not isinstance(current, int):
+            LOGGER.error("UNEXECUTABLE - DISK USAGE UNKNOWN")
 
 
 class Recorder(Looper):
@@ -362,12 +456,14 @@ class Recorder(Looper):
                 ):
                     LOGGER.error(f"KILL INACTIVE STREAM: {self._env.name}")
                     self.send_stop()
+
                 self.reset_elapsed()
         else:
             self.send_stop()
 
     def _teardown(self) -> None:
         returncode: int | None = None
+
         if self._popen is not None:
             try:
                 self._popen.terminate()
@@ -382,10 +478,12 @@ class Recorder(Looper):
             self._stream_logger_thread.join()
 
     def _stream_logger(self, popen: subprocess.Popen[str], stream_name: str) -> None:
-        LOGGER.info("start stream logger")
+        LOGGER.info(f"start stream logger: {stream_name}")
+
         while (popen.stderr is not None) and (popen.poll() is None):
             STREAM_LOGGER.warning(f"[{stream_name}] {popen.stderr.readline().rstrip()}")
-        LOGGER.info("stop stream logger")
+
+        LOGGER.info(f"stop stream logger: {stream_name}")
 
     @property
     def env(self) -> RecorderEnv:
@@ -396,18 +494,16 @@ LooperT = typing.TypeVar("LooperT", bound=Looper)
 
 
 def filename(*parts: str, ext: str | None = None) -> str:
-    filename = C.EMPTY_STR
+    filename: str = C.EMPTY_STR.join(parts)
 
-    for part in parts:
-        filename += part
     if (ext is not None) and (len(ext) >= 1):
         filename += "." + ext
 
     return filename
 
 
-def read_text(file: Path) -> str:
-    text: str = C.EMPTY_STR
+def read_text(file: Path) -> str | None:
+    text: str | None = None
 
     try:
         text = file.read_text()
@@ -417,15 +513,15 @@ def read_text(file: Path) -> str:
     return text
 
 
-def write_text(file: Path, text: str) -> int:
-    size: int = -1
+def write_text(file: Path, text: str) -> bool:
+    is_success: bool = False
 
     try:
-        size = file.write_text(text)
+        is_success = file.write_text(text) == len(text)
     except Exception as e:
         LOGGER.error(f"FAILED TO WRITE: {file} - {e}")
 
-    return size
+    return is_success
 
 
 def remove(path: Path) -> bool:
@@ -517,8 +613,8 @@ def find(
     )
 
 
-def usage_rate(dir: Path) -> int:
-    usage_rate: int = -1
+def usage_rate(dir: Path) -> int | None:
+    usage_rate: int | None = None
 
     try:
         total, used, _ = shutil.disk_usage(dir)
@@ -530,96 +626,13 @@ def usage_rate(dir: Path) -> int:
     return usage_rate
 
 
-def is_running(lock: Path) -> bool:
-    is_running: bool = False
-
-    if lock.is_file():
-        if write_text(lock, C.LOCK_REQ_CHECK) == len(C.LOCK_REQ_CHECK):
-            t: float = time.time()
-            while (time.time() - t) < C.LOCK_REQ_CHECK_TIMEOUT:
-                if read_text(lock) != C.LOCK_REQ_CHECK:
-                    is_running = True
-                    break
-                time.sleep(C.LOCK_CHECK_SLEEP)
-        else:
-            is_running = True
-
-    return is_running
-
-
-def acquire_lock(lock: Path, pid: int) -> bool:
-    return (write_text(lock, str(pid)) > 0) if not is_running(lock) else False
-
-
-def update_lock(lock: Path, pid: int) -> bool:
-    is_updated: bool = False
-
-    lock_text = read_text(lock)
-    if lock_text == str(pid):
-        is_updated = True
-    elif lock_text == C.LOCK_REQ_CHECK:
-        is_updated = write_text(lock, str(pid)) > 0
-    elif lock_text == C.LOCK_REQ_STOP:
-        pass
-    else:
-        LOGGER.error(f"UNEXPECTED TEXT IN LOCK: {lock_text}")
-
-    return is_updated
-
-
-def release_lock(lock: Path) -> bool:
-    return remove(lock)
-
-
-def stop_request(lock: Path) -> bool | None:
-    is_success: bool | None = None
-
-    if lock.is_file():
-        is_success = False
-        if write_text(lock, str(C.LOCK_REQ_STOP)) == len(C.LOCK_REQ_STOP):
-            t: float = time.time()
-            while (time.time() - t) < C.LOCK_REQ_STOP_TIMEOUT:
-                if not lock.exists():
-                    is_success = True
-                    break
-                time.sleep(C.LOCK_CHECK_SLEEP)
-            if not is_success and (read_text(lock) == str(C.LOCK_REQ_STOP)):
-                is_success = release_lock(lock)
-        else:
-            LOGGER.error(f"FAILED STOP REQUEST: {lock}")
-
-    return is_success
-
-
 def is_recording(vfile_name_pat: str, video_dir: Path, observation_time: float) -> bool:
     return bool(find(vfile_name_pat, video_dir, -observation_time))
 
 
-def start_looper(looper: LooperT | None) -> LooperT | None:
-    if looper is not None:
-        looper.start()
-
+def start_looper(looper: LooperT) -> LooperT:
+    looper.start()
     return looper
-
-
-def stop_looper(looper: Looper | None) -> None:
-    if looper is not None:
-        looper.send_stop()
-        try:
-            looper.join()
-        except Exception:
-            pass
-
-
-def start_loopers(loopers: list[LooperT] | list[LooperT | None]) -> list[LooperT]:
-    started_loopers: list[LooperT] = []
-
-    for looper in loopers:
-        if looper is not None:
-            looper.start()
-            started_loopers.append(looper)
-
-    return started_loopers
 
 
 def stop_loopers(loopers: list[LooperT] | list[LooperT | None]) -> None:
@@ -643,15 +656,15 @@ def get_alive_loopers(loopers: list[LooperT]) -> list[LooperT]:
     return [looper for looper in loopers if looper.is_alive()]
 
 
-def get_unwanted(
+def get_unreqd_recorders(
     recorders: list[Recorder], recorder_envs: list[RecorderEnv]
 ) -> list[Recorder]:
-    unwanted_dict: dict[int, Recorder] = {}
+    unreqd_recorders_dict: dict[int, Recorder] = {}
 
     for i in range(len(recorders)):
-        if i not in unwanted_dict:
+        if i not in unreqd_recorders_dict:
             if recorders[i].env not in recorder_envs:
-                unwanted_dict[i] = recorders[i]
+                unreqd_recorders_dict[i] = recorders[i]
             else:
                 duplicated_dict: dict[int, Recorder] = {
                     i + j: recorders[i + j]
@@ -659,12 +672,12 @@ def get_unwanted(
                     if recorders[i + j].env == recorders[i].env
                 }
                 if len(duplicated_dict) > 1:
-                    unwanted_dict |= duplicated_dict
+                    unreqd_recorders_dict |= duplicated_dict
 
-    return list(unwanted_dict.values())
+    return list(unreqd_recorders_dict.values())
 
 
-def get_unrecordings(
+def get_reqd_recorder_envs(
     recorder_envs: list[RecorderEnv], recorders: list[Recorder]
 ) -> list[RecorderEnv]:
     recording_envs: list[RecorderEnv] = [
@@ -677,41 +690,44 @@ def get_unrecordings(
     ]
 
 
-def status(env: Env, args: argparse.Namespace) -> int:
-    result: int = E.NONE
+def status(env: Env, lock: Lock) -> int:
+    e_code: int = E.NONE
 
     print(datetime.now().strftime(C.DATE_FORMAT))
     print(C.EMPTY_STR)
 
-    if is_running(env.lock):
+    if isinstance((result := lock.check()), bool) and result:
         print("[STREAM]")
         for renv in env.recorder_envs:
             if is_recording(renv.vfile_name_pat, renv.video_dir, renv.obs_time):
                 print(f"{renv.name} : OK")
             else:
                 print(f"{renv.name} : NG")
-                result = result | E.STREAM
-    else:
+                e_code |= E.STREAM
+    elif isinstance(result, bool) and not result:
         print("NOT RUNNING")
-        result = result | E.GENERAL
+        e_code |= E.GENERAL
+    else:
+        print("STATUS UNKNOWN")
+        e_code |= E.GENERAL
     print(C.EMPTY_STR)
 
     print("[STORAGE]")
-    if (current := usage_rate(env.storager_env.video_dir)) >= 0:
+    if isinstance((current := usage_rate(env.storager_env.video_dir)), int):
         print(f"Current : {current}%")
         print(f"Remove start : {env.storager_env.remove_start}%")
         print(f"Remove stop : {env.storager_env.remove_stop}%")
     else:
-        print("FAILED TO GET DISK USAGE")
-        LOGGER.error("FAILED TO GET DISK USAGE")
-        result = result | E.GENERAL
+        print("DISK USAGE UNKNOWN")
+        LOGGER.error("DISK USAGE UNKNOWN")
+        e_code |= E.GENERAL
     print(C.EMPTY_STR)
 
-    return result
+    return e_code
 
 
-def start(env: Env, args: argparse.Namespace) -> int:
-    result: int = E.NONE
+def start(env: Env, lock: Lock) -> int:
+    e_code: int = E.NONE
 
     LOGGER.info("in")
 
@@ -720,60 +736,56 @@ def start(env: Env, args: argparse.Namespace) -> int:
     recorders: list[Recorder] = []
     pid: int = os.getpid()
 
-    if acquire_lock(env.lock, pid):
-        while update_lock(env.lock, pid):
+    if lock.acquire(pid):
+        while lock.update(pid):
             if not is_alive(storager):
                 storager = start_looper(Storager(main_thread, env.storager_env))
 
-            stop_loopers(get_unwanted(recorders, env.recorder_envs))
+            stop_loopers(get_unreqd_recorders(recorders, env.recorder_envs))
             recorders = get_alive_loopers(recorders)
-            recorders += start_loopers(
-                [
-                    Recorder(main_thread, recorder_env)
-                    for recorder_env in get_unrecordings(env.recorder_envs, recorders)
-                ]
-            )
-            if not recorders:
+            for recorder_env in get_reqd_recorder_envs(env.recorder_envs, recorders):
+                recorders.append(start_looper(Recorder(main_thread, recorder_env)))
+
+            if not (len(recorders) > 0):
                 LOGGER.warning("No Stream To Record")
-                result = E.STREAM
+                e_code |= E.STREAM
                 break
 
             time.sleep(C.MAIN_THREAD_SLEEP)
 
-        stop_loopers(recorders)
-        stop_looper(storager)
-        if not release_lock(env.lock):
+        stop_loopers(recorders + [storager])
+        if not lock.release():
             LOGGER.error("FAILED TO RELEASE LOCK")
 
     else:
         LOGGER.warning("Already Running")
-        result = E.GENERAL
+        e_code |= E.GENERAL
 
-    LOGGER.info(f"out({result})")
+    LOGGER.info(f"out: {e_code}")
 
-    return result
+    return e_code
 
 
-def stop(env: Env, args: argparse.Namespace) -> int:
-    result: int = E.NONE
+def stop(env: Env, lock: Lock) -> int:
+    e_code: int = E.NONE
 
     LOGGER.info("in")
 
-    if (response := stop_request(env.lock)) is not None:
-        if not response:
-            LOGGER.error("FAILED TO STOP")
-            result = E.GENERAL
-    else:
+    if isinstance(result := lock.stop(), bool) and not result:
+        LOGGER.error("FAILED TO STOP")
+        e_code |= E.GENERAL
+    elif not isinstance(result, bool):
         LOGGER.warning("Not Running")
-        result = E.GENERAL
+        e_code |= E.GENERAL
 
-    LOGGER.info(f"out({result})")
+    LOGGER.info(f"out: {e_code}")
 
-    return result
+    return e_code
 
 
-def init(cwd: Path) -> Env | None:
+def init(cwd: Path) -> tuple[Env | None, Lock | None]:
     env: Env | None = None
+    lock: Lock | None = None
 
     is_dir_set: bool = True
     try:
@@ -785,6 +797,8 @@ def init(cwd: Path) -> Env | None:
         print(f"FAILED TO INITIALIZE: {cwd} - {e}", file=sys.stderr)
 
     if (env is not None) and is_dir_set:
+        lock = Lock(cwd)
+
         handler = TimedRotatingFileHandler(
             env.log_env.log_dir / C.LOG_NAME,
             when=C.LOG_WHEN,
@@ -810,11 +824,11 @@ def init(cwd: Path) -> Env | None:
         env = None
         print("FAILED TO PREPARE DIRECTORIES", file=sys.stderr)
 
-    return env
+    return (env, lock)
 
 
 def main() -> int:
-    result: int = E.NONE
+    e_code: int = E.NONE
 
     parser: argparse.ArgumentParser = argparse.ArgumentParser()
     parser.set_defaults(func=status)
@@ -829,16 +843,17 @@ def main() -> int:
     subparser.set_defaults(func=stop)
 
     args: argparse.Namespace = parser.parse_args()
-    if (env := init(Path(args.dir).resolve())) is not None:
+    env, lock = init(Path(args.dir).resolve())
+    if isinstance(env, Env) and isinstance(lock, Lock):
         try:
-            result = args.func(env, args)
+            e_code |= args.func(env, lock)
         except Exception as e:
             LOGGER.critical(f"UNEXPECTED ERROR: {e}")
-            result = E.GENERAL
+            e_code |= E.GENERAL
     else:
-        result = E.PREF
+        e_code |= E.PREF
 
-    return result
+    return e_code
 
 
 if __name__ == "__main__":
