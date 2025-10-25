@@ -22,88 +22,87 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
-class Constant:
-    VERSION: str = "1.0.10-20251019-mod"
-    BASE_FILE_NAME: str = Path(__file__).stem
-    PREF_FILE_NAME: str = BASE_FILE_NAME + ".json"
-    LOCK_FILE_NAME: str = BASE_FILE_NAME + ".lock"
+class C:  # Constant
+    VERSION: typing.Final[str] = "1.0.10-20251019-mod"
+    BASE_FILE_NAME: typing.Final[str] = Path(__file__).stem
+    PREF_FILE_NAME: typing.Final[str] = BASE_FILE_NAME + ".json"
+    LOCK_FILE_NAME: typing.Final[str] = BASE_FILE_NAME + ".lock"
 
-    D: str = "[0-9]"
-    KB: int = 1024
-    SEC: int = 1
-    MIN: int = 60 * SEC
-    HOUR: int = 60 * MIN
+    D: typing.Final[str] = "[0-9]"
+    KB: typing.Final[int] = 1024
+    SEC: typing.Final[int] = 1
+    MIN: typing.Final[int] = 60 * SEC
+    HOUR: typing.Final[int] = 60 * MIN
+    EMPTY_STR: typing.Final[str] = ""
 
-    SUBCOMMAND_START: str = "start"
-    SUBCOMMAND_STOP: str = "stop"
+    SUBCOMMAND_START: typing.Final[str] = "start"
+    SUBCOMMAND_STOP: typing.Final[str] = "stop"
 
-    LOCK_CMD_TEXT_CHECK: str = "CHECK"
-    LOCK_CMD_TEXT_STOP: str = "STOP"
+    LOCK_CMD_TEXT_CHECK: typing.Final[str] = "CHECK"
+    LOCK_CMD_TEXT_STOP: typing.Final[str] = "STOP"
 
-    LOG_NAME: str = BASE_FILE_NAME + "_log"
-    LOG_WHEN: str = "midnight"
-    LOG_INTERVAL: int = 1
-    LOG_ENCODING: str = "utf-8"
-    LOG_FORMATTER: str = "%(asctime)s:%(levelname)s[%(funcName)s] %(message)s"
-    LOG_LEVEL: int = logging.DEBUG
+    LOG_NAME: typing.Final[str] = BASE_FILE_NAME + "_log"
+    LOG_WHEN: typing.Final[str] = "midnight"
+    LOG_INTERVAL: typing.Final[int] = 1
+    LOG_ENCODING: typing.Final[str] = "utf-8"
+    LOG_FORMATTER: typing.Final[str] = (
+        "%(asctime)s:%(levelname)s[%(funcName)s] %(message)s"
+    )
+    LOG_LEVEL: typing.Final[int] = logging.DEBUG
 
-    STREAMLOG_NAME: str = "stream_log"
-    STREAMLOG_ENCODING: str = LOG_ENCODING
-    STREAMLOG_FORMATTER: str = "%(asctime)s: %(message)s"
-    STREAMLOG_LEVEL: int = logging.WARNING
+    STREAMLOG_NAME: typing.Final[str] = "stream_log"
+    STREAMLOG_ENCODING: typing.Final[str] = LOG_ENCODING
+    STREAMLOG_FORMATTER: typing.Final[str] = "%(asctime)s: %(message)s"
+    STREAMLOG_LEVEL: typing.Final[int] = logging.WARNING
 
-    VFILE_NAME_DATE_FMT: str = "-%Y%m%d-%H%M%S"
-    VFILE_NAME_DATE_PAT: str = "-" + (D * 8) + "-" + (D * 6)
-    ARCHIVE_DIR_NAME: str = "archive"
-    ARCHIVE_SUBDIR_NAME_PAT: str = "*-" + (D * 8)
-    ARCHIVE_SUBDIR_NAME_RE: str = r"^(.+-\d{8})-\d{6}\..+$"
+    VFILE_NAME_DATE_FMT: typing.Final[str] = "-%Y%m%d-%H%M%S"
+    VFILE_NAME_DATE_PAT: typing.Final[str] = "-" + (D * 8) + "-" + (D * 6)
+    ARCHIVE_DIR_NAME: typing.Final[str] = "archive"
+    ARCHIVE_SUBDIR_NAME_PAT: typing.Final[str] = "*-" + (D * 8)
+    ARCHIVE_SUBDIR_NAME_RE: typing.Final[str] = r"^(.+-\d{8})-\d{6}\..+$"
 
-    MAIN_THREAD_SLEEP: float = float(1 * SEC)
-    LOOPER_SLEEP: float = float(1 * SEC)
-    STORAGER_EXEC_PERIOD: float = float(5 * MIN)
-    RECORDER_WD_PERIOD: float = float(1 * MIN)
-    RECORDER_OBS_MARGIN: float = float(1 * MIN)
-    RECBIN_TERM_TIMEOUT: float = float(5 * SEC)
+    MAIN_THREAD_SLEEP: typing.Final[float] = float(1 * SEC)
+    LOOPER_SLEEP: typing.Final[float] = float(1 * SEC)
+    STORAGER_EXEC_PERIOD: typing.Final[float] = float(5 * MIN)
+    RECORDER_WD_PERIOD: typing.Final[float] = float(1 * MIN)
+    RECORDER_OBS_MARGIN: typing.Final[float] = float(1 * MIN)
+    RECBIN_TERM_TIMEOUT: typing.Final[float] = float(5 * SEC)
 
-    DATE_FORMAT: str = "%Y/%m/%d %H:%M:%S"
-    EMPTY_STR: str = ""
-
-
-@dataclass(frozen=True)
-class Default:
-    REC_BIN: str = "ffmpeg"
-
-    LOG_REL_DIR: Path = Path("log")
-    VIDEO_REL_DIR: Path = Path("video")
-
-    LOG_BACKUP: int = 28
-    STREAMLOG_SIZE_KB: int = 100
-    STREAMLOG_BACKUP: int = 5
-
-    ARCHIVING_WAIT_HOUR: int = 6
-    REMOVE_TH_MIN: int = 1
-    REMOVE_TH_MAX: int = 99
-    REMOVE_START: int = REMOVE_TH_MAX
-    REMOVE_STOP: int = REMOVE_START
-
-    TRANSPORT: str = "udp"
-    EXT: str = "mp4"
-    SEGMENT_SEC: int = 900
+    DATE_FORMAT: typing.Final[str] = "%Y/%m/%d %H:%M:%S"
 
 
 @dataclass(frozen=True)
-class ErrorCode:
-    NONE: int = 0b00000000
-    GENERAL: int = 0b00000001
-    PREF: int = 0b00000010
-    STREAM: int = 0b00000100
+class D:  # Default
+    REC_BIN: typing.Final[str] = "ffmpeg"
+
+    LOG_REL_DIR: typing.Final[Path] = Path("log")
+    VIDEO_REL_DIR: typing.Final[Path] = Path("video")
+
+    LOG_BACKUP: typing.Final[int] = 28
+    STREAMLOG_SIZE_KB: typing.Final[int] = 100
+    STREAMLOG_BACKUP: typing.Final[int] = 5
+
+    ARCHIVING_WAIT_HOUR: typing.Final[int] = 6
+    REMOVE_TH_MIN: typing.Final[int] = 1
+    REMOVE_TH_MAX: typing.Final[int] = 99
+    REMOVE_START: typing.Final[int] = REMOVE_TH_MAX
+    REMOVE_STOP: typing.Final[int] = REMOVE_START
+
+    TRANSPORT: typing.Final[str] = "udp"
+    EXT: typing.Final[str] = "mp4"
+    SEGMENT_SEC: typing.Final[int] = 900
 
 
-C = Constant()
-D = Default()
-E = ErrorCode()
-LOGGER = logging.getLogger(__name__)
-STREAM_LOGGER = logging.getLogger(__name__ + "stream")
+@dataclass(frozen=True)
+class E:  # ErrorCode
+    NONE: typing.Final[int] = 0b00000000
+    GENERAL: typing.Final[int] = 0b00000001
+    PREF: typing.Final[int] = 0b00000010
+    STREAM: typing.Final[int] = 0b00000100
+
+
+LOGGER: logging.Logger = logging.getLogger(__name__)
+STREAM_LOGGER: logging.Logger = logging.getLogger(__name__ + "stream")
 T = typing.TypeVar("T")
 
 
@@ -645,7 +644,7 @@ def stop_loopers(loopers: list[LooperT] | list[LooperT | None]) -> None:
         try:
             looper.join()
         except Exception:
-            pass
+            LOGGER.warning(f"failed to join looper: {looper}")
 
 
 def is_alive(looper: Looper | None) -> bool:
@@ -731,7 +730,7 @@ def start(env: Env, lock: Lock) -> int:
 
     LOGGER.info("in")
 
-    main_thread = threading.main_thread()
+    main_thread: threading.Thread = threading.main_thread()
     storager: Storager | None = None
     recorders: list[Recorder] = []
     pid: int = os.getpid()
@@ -793,12 +792,10 @@ def init(cwd: Path) -> tuple[Env | None, Lock | None]:
         for dir in [env.log_env.log_dir, env.storager_env.archive_dir]:
             is_dir_set &= mkdir(dir)
     except Exception as e:
-        is_dir_set = False
-        print(f"FAILED TO INITIALIZE: {cwd} - {e}", file=sys.stderr)
+        print(f"FAILED TO GET ENV: {cwd} - {e}", file=sys.stderr)
 
-    if (env is not None) and is_dir_set:
+    if isinstance(env, Env) and is_dir_set:
         lock = Lock(cwd)
-
         handler = TimedRotatingFileHandler(
             env.log_env.log_dir / C.LOG_NAME,
             when=C.LOG_WHEN,
@@ -821,7 +818,6 @@ def init(cwd: Path) -> tuple[Env | None, Lock | None]:
         STREAM_LOGGER.setLevel(C.STREAMLOG_LEVEL)
 
     else:
-        env = None
         print("FAILED TO PREPARE DIRECTORIES", file=sys.stderr)
 
     return (env, lock)
@@ -851,6 +847,7 @@ def main() -> int:
             LOGGER.critical(f"UNEXPECTED ERROR: {e}")
             e_code |= E.GENERAL
     else:
+        print(f"FAILED TO INITIALIZE: Env[{env}], Lock[{lock}]", file=sys.stderr)
         e_code |= E.PREF
 
     return e_code
