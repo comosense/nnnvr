@@ -133,8 +133,8 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
 |:-|:-|:-|:-|:-|
 |`dir`|No|String|The specified path to the directory for video files.|`"<working directory>/video"`|
 |`archivingWaitHour`|No|Integer|Wait time (in hours) before archiving each video file.|`6`|
-|`removeStart`|No|Integer|The disk usage percentage threshold to start removing the oldest videos.|`99`|
-|`removeStop`|No|Integer|The disk usage percentage threshold to stop removing videos.|`99`|
+|`removeStart`|No|Integer|The disk usage percentage threshold (1-99) to start removing the oldest videos.|`99`|
+|`removeStop`|No|Integer|The disk usage percentage threshold (1-99) to stop removing videos. **Must be $\le$ `removeStart`**.|`99`|
 
 ## Usage and Testing
 **Important:** Ensure the user executing these commands has the necessary permissions to run `ffmpeg`.
