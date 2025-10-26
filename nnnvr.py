@@ -23,7 +23,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class C:  # Constant
-    VERSION: typing.Final[str] = "1.0.10-20251019-mod"
+    VERSION: typing.Final[str] = "1.0.11-20251026"
     BASE_FILE_NAME: typing.Final[str] = Path(__file__).stem
     PREF_FILE_NAME: typing.Final[str] = BASE_FILE_NAME + ".json"
     LOCK_FILE_NAME: typing.Final[str] = BASE_FILE_NAME + ".lock"
@@ -275,7 +275,13 @@ class Lock:
 
         if (res := self._issue(Lock._CMD_CHECK)) == Lock._Res.ACCEPTED:
             result = True
-        elif (res == Lock._Res.NOT_AVAILABLE) or (res == Lock._Res.NO_RESPONSE):
+        elif res == Lock._Res.NO_RESPONSE:
+            LOGGER.warning("No Response, Judged To Be Stopped")
+            result = False
+        elif res == Lock._Res.FAILED:
+            LOGGER.error("FAILED, UNABLED TO JUDGE STATUS")
+            result = None
+        elif res == Lock._Res.NOT_AVAILABLE:
             result = False
 
         return result
@@ -285,10 +291,14 @@ class Lock:
 
         if (res := self._issue(Lock._CMD_STOP)) == Lock._Res.ACCEPTED:
             result = True
-        elif res == Lock._Res.FAILED:
-            result = False
         elif res == Lock._Res.NO_RESPONSE:
+            LOGGER.warning("No Response, Forced Release")
             result = self.release()
+        elif res == Lock._Res.FAILED:
+            LOGGER.error("FAILED, UNABLED TO STOP")
+            result = False
+        elif res == Lock._Res.NOT_AVAILABLE:
+            result = None
 
         return result
 
@@ -312,8 +322,10 @@ class Lock:
             is_updated = write_text(self._lock_file, str(pid))
         elif lock_text == Lock._CMD_STOP.text:
             LOGGER.info("issued stop command")
+            is_updated = False
         else:
             LOGGER.error(f"UNEXPECTED TEXT IN LOCK FILE: {lock_text}")
+            is_updated = False
 
         return is_updated
 
