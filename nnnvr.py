@@ -22,8 +22,10 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
-class C:  # Constant
-    VERSION: typing.Final[str] = "1.0.11-20251026"
+class C:
+    """Constant Values"""
+
+    VERSION: typing.Final[str] = "1.0.12-20251029"
     BASE_FILE_NAME: typing.Final[str] = Path(__file__).stem
     PREF_FILE_NAME: typing.Final[str] = BASE_FILE_NAME + ".json"
     LOCK_FILE_NAME: typing.Final[str] = BASE_FILE_NAME + ".lock"
@@ -41,7 +43,7 @@ class C:  # Constant
     LOCK_CMD_TEXT_CHECK: typing.Final[str] = "CHECK"
     LOCK_CMD_TEXT_STOP: typing.Final[str] = "STOP"
 
-    LOG_NAME: typing.Final[str] = BASE_FILE_NAME + "_log"
+    LOG_FILE_NAME: typing.Final[str] = BASE_FILE_NAME + "_log"
     LOG_WHEN: typing.Final[str] = "midnight"
     LOG_INTERVAL: typing.Final[int] = 1
     LOG_ENCODING: typing.Final[str] = "utf-8"
@@ -50,7 +52,7 @@ class C:  # Constant
     )
     LOG_LEVEL: typing.Final[int] = logging.DEBUG
 
-    STREAMLOG_NAME: typing.Final[str] = "stream_log"
+    STREAMLOG_FILE_NAME: typing.Final[str] = "stream_log"
     STREAMLOG_ENCODING: typing.Final[str] = LOG_ENCODING
     STREAMLOG_FORMATTER: typing.Final[str] = "%(asctime)s: %(message)s"
     STREAMLOG_LEVEL: typing.Final[int] = logging.WARNING
@@ -64,15 +66,17 @@ class C:  # Constant
     MAIN_THREAD_SLEEP: typing.Final[float] = float(1 * SEC)
     LOOPER_SLEEP: typing.Final[float] = float(1 * SEC)
     STORAGER_EXEC_PERIOD: typing.Final[float] = float(5 * MIN)
-    RECORDER_WD_PERIOD: typing.Final[float] = float(1 * MIN)
-    RECORDER_OBS_MARGIN: typing.Final[float] = float(1 * MIN)
     RECBIN_TERM_TIMEOUT: typing.Final[float] = float(5 * SEC)
+    RECORDER_WD_PERIOD: typing.Final[float] = float(1 * MIN)
+    OBS_MARGIN: typing.Final[int] = 1 * MIN
 
     DATE_FORMAT: typing.Final[str] = "%Y/%m/%d %H:%M:%S"
 
 
 @dataclass(frozen=True)
-class D:  # Default
+class D:
+    """Default Values"""
+
     REC_BIN: typing.Final[str] = "ffmpeg"
 
     LOG_REL_DIR: typing.Final[Path] = Path("log")
@@ -94,7 +98,9 @@ class D:  # Default
 
 
 @dataclass(frozen=True)
-class E:  # ErrorCode
+class E:
+    """Error Codes"""
+
     NONE: typing.Final[int] = 0b00000000
     GENERAL: typing.Final[int] = 0b00000001
     PREF: typing.Final[int] = 0b00000010
@@ -108,8 +114,14 @@ T = typing.TypeVar("T")
 
 class PrefDict(UserDict[typing.Any, typing.Any]):
     def tget(self, key: typing.Any, default: T) -> T:
-        value = self.get(key)
-        return value if isinstance(value, type(default)) else default
+        value: typing.Any | None = self.get(key)
+
+        if not isinstance(value, type(default)):
+            if value is not None:
+                print(f"{value} Is An Invalid Type, {default} Is Used", file=sys.stderr)
+            value = default
+
+        return value
 
 
 @dataclass
@@ -171,7 +183,6 @@ class RecorderEnv:
         name: typing.Any = pref.get("name")
         url: typing.Any = pref.get("url")
         if isinstance(name, str) and isinstance(url, str):
-            transport: str = pref.tget("transport", D.TRANSPORT)
             ext: str = pref.tget("ext", D.EXT)
             vcodec: typing.Any = pref.get("vcodec")
             fps: typing.Any = pref.get("fps")
@@ -181,13 +192,13 @@ class RecorderEnv:
             self.name = name
             self.video_dir = dir
             self.vfile_name_pat = filename(name, C.VFILE_NAME_DATE_PAT, ext=ext)
-            self.obs_time = float(segment_sec) + C.RECORDER_OBS_MARGIN
+            self.obs_time = float(pref.tget("obsSec", segment_sec + C.OBS_MARGIN))
             self.cmd = tuple(
                 [rec_bin]
                 + ["-nostdin"]
                 + ["-hide_banner"]
                 + ["-loglevel", "warning"]
-                + ["-rtsp_transport", transport]
+                + ["-rtsp_transport", pref.tget("transport", D.TRANSPORT)]
                 + ["-i", url]
                 + (["-c:v", vcodec] if isinstance(vcodec, str) else [])
                 + (["-r", str(fps)] if isinstance(fps, int) else [])
@@ -243,13 +254,13 @@ class Lock:
         NO_RESPONSE = auto()
         ACCEPTED = auto()
 
-    _CMD_CHECK: _Cmd = _Cmd(C.LOCK_CMD_TEXT_CHECK, False)
-    _CMD_STOP: _Cmd = _Cmd(C.LOCK_CMD_TEXT_STOP, True)
-    _SLEEP: float = C.MAIN_THREAD_SLEEP
-    _TIMEOUT: float = _SLEEP * 5
+    _CMD_CHECK: typing.Final[_Cmd] = _Cmd(C.LOCK_CMD_TEXT_CHECK, False)
+    _CMD_STOP: typing.Final[_Cmd] = _Cmd(C.LOCK_CMD_TEXT_STOP, True)
+    _SLEEP: typing.Final[float] = C.MAIN_THREAD_SLEEP
+    _TIMEOUT: typing.Final[float] = _SLEEP * 5
 
     def __init__(self, cwd: Path) -> None:
-        self._lock_file = cwd / C.LOCK_FILE_NAME
+        self._lock_file: Path = cwd / C.LOCK_FILE_NAME
 
     def _issue(self, cmd: _Cmd) -> _Res:
         res: Lock._Res = Lock._Res.NOT_AVAILABLE
@@ -374,7 +385,7 @@ class Storager(Looper):
         super().__init__(caller)
 
     def _setup(self) -> None:
-        LOGGER.info("start Storager")
+        LOGGER.info("start storager")
 
     def _loop(self) -> None:
         if self.elapsed >= C.STORAGER_EXEC_PERIOD:
@@ -394,7 +405,7 @@ class Storager(Looper):
             self.reset_elapsed()
 
     def _teardown(self) -> None:
-        LOGGER.info("stop Storager")
+        LOGGER.info("stop storager")
 
     def _dst(self, file_name: str, dir: Path, subdir_name_re: str) -> Path | None:
         match: re.Match[str] | None = re.search(subdir_name_re, file_name)
@@ -452,7 +463,7 @@ class Recorder(Looper):
             text=True,
             bufsize=1,
         )
-        LOGGER.info(f"start Recorder: {self._env.name}")
+        LOGGER.info(f"start recorder: {self._env.name}")
 
         self._stream_logger_thread = threading.Thread(
             target=self._stream_logger, args=(self._popen, self._env.name), daemon=True
@@ -483,7 +494,7 @@ class Recorder(Looper):
                 LOGGER.warning(f"Could Not Terminate, Killing: {self._env.name}")
                 self._popen.kill()
                 returncode = self._popen.wait()
-        LOGGER.info(f"stop Recorder: {self._env.name}({returncode})")
+        LOGGER.info(f"stop recorder: {self._env.name}({returncode})")
 
         if self._stream_logger_thread is not None:
             self._stream_logger_thread.join()
@@ -656,7 +667,7 @@ def stop_loopers(loopers: list[LooperT] | list[LooperT | None]) -> None:
         try:
             looper.join()
         except Exception:
-            LOGGER.warning(f"failed to join looper: {looper}")
+            LOGGER.warning(f"Failed To Join Looper: {looper}")
 
 
 def is_alive(looper: Looper | None) -> bool:
@@ -809,7 +820,7 @@ def init(cwd: Path) -> tuple[Env | None, Lock | None]:
     if isinstance(env, Env) and is_dir_set:
         lock = Lock(cwd)
         handler = TimedRotatingFileHandler(
-            env.log_env.log_dir / C.LOG_NAME,
+            env.log_env.log_dir / C.LOG_FILE_NAME,
             when=C.LOG_WHEN,
             backupCount=env.log_env.log_backup,
             interval=C.LOG_INTERVAL,
@@ -820,7 +831,7 @@ def init(cwd: Path) -> tuple[Env | None, Lock | None]:
         LOGGER.setLevel(C.LOG_LEVEL)
 
         stream_handler = RotatingFileHandler(
-            env.log_env.log_dir / C.STREAMLOG_NAME,
+            env.log_env.log_dir / C.STREAMLOG_FILE_NAME,
             maxBytes=env.log_env.streamlog_size,
             backupCount=env.log_env.streamlog_backup,
             encoding=C.STREAMLOG_ENCODING,

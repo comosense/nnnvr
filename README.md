@@ -1,10 +1,10 @@
 # nnnvr
-**nnnvr (No-Named Network Video Recorder):** A straightforward, minimalist Network Video Recording solution.
+**nnnvr (No-Named Network Video Recorder):** A simple, minimalist Network Video Recording (NVR) solution.
 
 ## Prerequisites
-While `nnnvr` has only been tested in a limited environment[^1], it is designed to function on most systems that meet the following requirements, regardless of the specific operating system or hardware.
+While `nnnvr` has only been tested in a limited environment[^1], it is designed to run on most systems that meet the following requirements.
 
-**Note:** The following examples are tailored for Debian-based Linux. Please adapt them for other operating systems (e.g., using `PowerShell`, `Task Scheduler` on Windows, etc.).
+**Note:** The following examples are tailored for Debian-based Linux. Please adapt these commands for your specific operating systems (e.g., using `PowerShell`, `Task Scheduler` on Windows, etc.).
 
 
 ### IP Cameras
@@ -27,7 +27,7 @@ sudo apt install python3
 ## Installation
 
 ### 1. `nnnvr.py`
-Place `nnnvr.py` in your desired working directory and grant it executable permission.
+Place `nnnvr.py` in your desired working directory and make it executable.
 * Example on Debian / Ubuntu:
   ```sh
   cd /WORK/DIR
@@ -37,9 +37,9 @@ Place `nnnvr.py` in your desired working directory and grant it executable permi
   Replace [VERSION] with the latest version tag from the releases page (e.g., 1.0.9). See: https://github.com/comosense/nnnvr/releases
 
 ### 2. `nnnvr.json`
-Create the configuration file, `nnnvr.json`, in the working directory, and adjust the settings to match your environment.
+Create a configuration file named `nnnvr.json` in the same working directory. Adjust the settings to match your environment.
 
-**SECURITY WARNING:** Since `nnnvr.json` contains the RTSP URL (including user/password), it is **crucial** to set appropriate file permissions, such as `chmod 600 ./nnnvr.json`.
+**SECURITY WARNING:** This file contains credentials (RTSP usernames and passwords). It is **crucial** to restrict its permissions, such as `chmod 600 ./nnnvr.json`.
 
 * Example 1: Minimal `nnnvr.json`
   ```JSON
@@ -67,7 +67,8 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
               "vcodec": "libx264",
               "fps": 30,
               "acodec": "aac",
-              "segmentSec": 600
+              "segmentSec": 600,
+              "obsSec": 120
           },
           {
               "name": "cctv-Y",
@@ -79,7 +80,8 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
               "transport": "udp",
               "ext": "ts",
               "vcodec": "copy",
-              "acodec": "copy"
+              "acodec": "copy",
+              "obsSec": 600
           }
       ],
       "recBin": "/PATH/TO/ffmpeg",
@@ -104,37 +106,38 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
 |Key|Required|Type|Description|Default|
 |:-|:-|:-|:-|:-|
 |`streams`|Yes|JSON array (See **Stream Configuration** below)|An array of IP camera stream configuration objects.|-|
-|`recBin`|No|String|The specified path to the `ffmpeg` executable.|`"ffmpeg"`|
+|`recBin`|No|String|Path to the `ffmpeg` executable.|`"ffmpeg"`|
 |`log`|No|JSON (See **Log Configuration** below)|Preferences for log file management.|(See **Log Configuration** below)|
 |`video`|No|JSON (See **Video Configuration** below)|Preferences for video storage management.|(See **Video Configuration** below)|
 
 #### Stream Configuration ("stream" JSON)
 |Key|Required|Type|Description|Default|
 |:-|:-|:-|:-|:-|
-|`name`|Yes|String|A unique name for the stream (e.g., `cctv-X`). **Must be unique.**|-|
-|`url`|Yes|String|The RTSP URL (e.g., `"rtsp://..."`).|-|
-|`transport`|No|String|RTSP transport protocol (Equivalent to `ffmpeg`'s `-rtsp_transport` option, usually `"udp"` or `"tcp"`).|`"udp"`|
+|`name`|Yes|String|A unique name for the stream (e.g., `cctv-X`). **Must be unique.** across all defined streams.|-|
+|`url`|Yes|String|RTSP URL (e.g., `"rtsp://..."`).|-|
+|`transport`|No|String|RTSP transport protocol (Equivalent to `ffmpeg`'s `-rtsp_transport` option. Common values are `"udp"` or `"tcp"`).|`"udp"`|
 |`ext`|No|String|Video file extension and container format (e.g., `"mp4"`, `"ts"`).|`"mp4"`|
 |`vcodec`|No|String|Video codec for recording (Equivalent to `ffmpeg`'s `-c:v` option).|(Depends on `ffmpeg`)|
 |`fps`|No|Integer|Frames per second for recording (Equivalent to `ffmpeg`'s `-r` option).|(Depends on `ffmpeg`)|
 |`acodec`|No|String|Audio codec for recording (Equivalent to `ffmpeg`'s `-c:a` option).|(Depends on `ffmpeg`)|
 |`segmentSec`|No|Integer|Duration (in seconds) for splitting the recorded video files (Equivalent to `ffmpeg`'s `-segment_time` option).|`900`|
+|`obsSec`|No|Integer|Observation window (in seconds). If no video file is updated within this period, the recorder will restart the stream.|`segmentSec`+`60`|
 
 #### Log Configuration ("log" JSON)
 |Key|Required|Type|Description|Default|
 |:-|:-|:-|:-|:-|
-|`dir`|No|String|The specified path to the directory for log files.|`"<working directory>/log"`|
-|`logBackup`|No|Integer|The number of main daily log files to keep.|`28`|
-|`streamlogSizeKb`|No|Integer|The maximum size (in KBytes) of a stream log file.|`100`|
-|`streamlogBackup`|No|Integer|The number of stream log files to keep (Stream logs roll over at `streamlogSizeKb`).|`5`|
+|`dir`|No|String|Path to the log directory.|`"<working directory>/log"`|
+|`logBackup`|No|Integer|Number of daily log files to retain.|`28`|
+|`streamlogSizeKb`|No|Integer|Maximum size (in KBytes) of a stream log file.|`100`|
+|`streamlogBackup`|No|Integer|Number of stream log files to retain. Logs are rotated when they reach `streamlogSizeKb`.|`5`|
 
 #### Video Storage Configuration ("video" JSON)
 |Key|Required|Type|Description|Default|
 |:-|:-|:-|:-|:-|
-|`dir`|No|String|The specified path to the directory for video files.|`"<working directory>/video"`|
+|`dir`|No|String|Path to the video directory.|`"<working directory>/video"`|
 |`archivingWaitHour`|No|Integer|Wait time (in hours) before archiving each video file.|`6`|
-|`removeStart`|No|Integer|The disk usage percentage threshold (1-99) to start removing the oldest videos.|`99`|
-|`removeStop`|No|Integer|The disk usage percentage threshold (1-99) to stop removing videos. **Must be $\le$ `removeStart`**.|`99`|
+|`removeStart`|No|Integer|Disk usage percentage (1-99) to **trigger** removal of old archives.|`99`|
+|`removeStop`|No|Integer|Disk usage percentage (1-99) to **stop** removal. **Must be $\le$ `removeStart`**.|`99`|
 
 ## Usage and Testing
 **Important:** Ensure the user executing these commands has the necessary permissions to run `ffmpeg`.
@@ -144,15 +147,15 @@ Create the configuration file, `nnnvr.json`, in the working directory, and adjus
 cd /WORK/DIR
 ./nnnvr.py start &
 ```
-If successful, a recorded file should be created in the video directory. Check the logs for troubleshooting if it fails.
+If successful, video files will appear in the specified video directory. If not, check the log files for errors.
 
-If `nnnvr.py` and `nnnvr.json` are not in the same directory, use the `-d` option, like `/PATH/TO/nnnvr.py -d /WORK/DIR start &`. **This directory requirement applies to all subsequent commands.**
+If `nnnvr.py` and `nnnvr.json` are not in the same directory, use the `-d` option, like `/PATH/TO/nnnvr.py -d /WORK/DIR start &`. **This applies to all commands(`start`, `stop` and status).**
 
 ### 2. Check Status
 ```sh
 ./nnnvr.py
 ```
-This command show the current `nnnvr` status (e.g., recording activity, disk usage).
+This command shows the current `nnnvr` status (e.g., recording activity, disk usage).
 
 ### 3. Stop `nnnvr`
 ```sh
@@ -160,7 +163,7 @@ This command show the current `nnnvr` status (e.g., recording activity, disk usa
 ```
 
 ## Deployment
-The fastest way to run `nnnvr` as a persistent background service is by using `systemd` for daemonization.
+For persistent background operation, running `nnnvr` as a `systemd` service is recommended.
 Create the file `nnnvr.service` based on your environment.
 * Example: `nnnvr.service`:
   ```sh
@@ -178,7 +181,7 @@ Create the file `nnnvr.service` based on your environment.
   [Install]
   WantedBy=multi-user.target
 
-Place `nnnvr.service` in the systemd directory and start the service:
+Place `nnnvr.service` in the systemd directory (e.g., `/etc/systemd/system/`) and then enable and start the service:
 ```sh
 sudo mv ./nnnvr.service /etc/systemd/system/.
 sudo systemctl daemon-reload
