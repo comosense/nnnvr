@@ -34,7 +34,7 @@ Place `nnnvr.py` in your desired working directory and make it executable.
   curl https://raw.githubusercontent.com/comosense/nnnvr/refs/tags/[VERSION]/nnnvr.py > nnnvr.py
   chmod +x ./nnnvr.py
   ```
-  Replace [VERSION] with the latest version tag from the releases page (e.g., 1.0.9). See: https://github.com/comosense/nnnvr/releases
+  Replace [VERSION] with the latest version tag from the releases page (e.g., 1.0.12). See: https://github.com/comosense/nnnvr/releases
 
 ### 2. `nnnvr.json`
 Create a configuration file named `nnnvr.json` in the same working directory. Adjust the settings to match your environment.
