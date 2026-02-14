@@ -137,7 +137,7 @@ Create a configuration file named `nnnvr.json` in the same working directory. Ad
 |`dir`|No|String|Path to the video directory.|`"<working directory>/video"`|
 |`archivingWaitHour`|No|Integer|Wait time (in hours) before archiving each video file.|`6`|
 |`removeStart`|No|Integer|Disk usage percentage (1-99) to **trigger** removal of old archives.|`99`|
-|`removeStop`|No|Integer|Disk usage percentage (1-99) to **stop** removal. **Must be $\le$ `removeStart`**.|`99`|
+|`removeStop`|No|Integer|Disk usage percentage (1-99) to **stop** removal. **Must be $\le$ `removeStart`**.|`removeStart`|
 
 ## Usage and Testing
 **Important:** Ensure the user executing these commands has the necessary permissions to run `ffmpeg`.

@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 
 import argparse
-import functools
 import json
 import logging
 import os
@@ -25,7 +24,7 @@ from pathlib import Path
 class C:
     """Constant Values"""
 
-    VERSION: typing.Final[str] = "1.0.12-20251029"
+    VERSION: typing.Final[str] = "1.0.13-20260214"
     BASE_FILE_NAME: typing.Final[str] = Path(__file__).stem
     PREF_FILE_NAME: typing.Final[str] = BASE_FILE_NAME + ".json"
     LOCK_FILE_NAME: typing.Final[str] = BASE_FILE_NAME + ".lock"
@@ -412,11 +411,11 @@ class Storager(Looper):
         return (dir / match.group(1) / file_name) if (match is not None) else None
 
     def _to_subdir(
-        self, pat: str, src_dir: Path, mtime: float, dst_dir: Path, subdir_name_re: str
+        self, pat: str, src_dir: Path, scope: float, dst_dir: Path, subdir_name_re: str
     ) -> None:
         for src, dst in [
             (file, self._dst(file.name, dst_dir, subdir_name_re))
-            for file in find(pat, src_dir, mtime)
+            for file in find(pat, src_dir, scope)
         ]:
             LOGGER.info(f"archiving: {src} -> {dst}")
             if not move_file(src, dst):
@@ -595,44 +594,30 @@ FindSort = typing.Literal["n", "t"]
 def find(
     pat: str,
     parent: Path,
-    mtime: float | None = None,
+    mtime_scope: float | None = None,
     type: FindType = "f",
     sort: FindSort = "n",
 ) -> list[Path]:
-    def _bool(_path: Path) -> bool:
-        return bool(_path)
-
-    def _is_file(_path: Path) -> bool:
-        return _path.is_file()
-
-    def _is_dir(_path: Path) -> bool:
-        return _path.is_dir()
-
-    def _is_mtime(_basetime: float, _mtime: float, _path: Path) -> bool:
-        return ((diff := (_basetime - _path.stat().st_mtime)) >= 0) and (
-            ((_mtime >= 0) and (diff >= _mtime)) or ((_mtime < 0) and (diff <= -_mtime))
-        )
-
-    def _mtime_sort(_paths: list[Path]) -> list[Path]:
-        return sorted(_paths, key=lambda _path: _path.stat().st_mtime)
-
-    is_type: typing.Callable[[Path], bool] = _bool
-    if type == "f":
-        is_type = _is_file
-    elif type == "d":
-        is_type = _is_dir
-
-    is_time: typing.Callable[[Path], bool] = _bool
-    if mtime is not None:
-        is_time = functools.partial(_is_mtime, time.time(), mtime)
-
-    do_sort: typing.Callable[[list[Path]], list[Path]] = sorted
-    if sort == "t":
-        do_sort = _mtime_sort
-
-    return do_sort(
-        [path for path in parent.glob(pat) if (is_type(path) and is_time(path))]
+    is_type: typing.Callable[[Path], bool] = {"f": Path.is_file, "d": Path.is_dir}.get(
+        type, lambda _: True
     )
+    sort_key: typing.Callable[[tuple[Path, float]], Path | float] = (
+        (lambda x: x[1]) if sort == "t" else (lambda x: x[0])
+    )
+
+    now = time.time()
+    path_infos: list[tuple[Path, float]] = []
+    for path in parent.glob(pat):
+        if is_type(path):
+            mtime = path.stat().st_mtime
+            if (mtime_scope is None) or (
+                ((mtime_scope >= 0) and (now - mtime >= mtime_scope))
+                or ((mtime_scope < 0) and (now - mtime <= -mtime_scope))
+            ):
+                path_infos.append((path, mtime))
+    path_infos.sort(key=sort_key)
+
+    return [path for path, _ in path_infos]
 
 
 def usage_rate(dir: Path) -> int | None:
