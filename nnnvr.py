@@ -24,7 +24,10 @@ from pathlib import Path
 class C:
     """Constant Values"""
 
-    VERSION: typing.Final[str] = "1.0.13-20260214"
+    VERSION: typing.Final[str] = "1.1.0-20260227"
+    EPILOG: typing.Final[str] = (
+        "Available container formats and audio/video codecs depend on your system. %(prog)s does not include any container formats, codecs, or patent licenses."
+    )
     BASE_FILE_NAME: typing.Final[str] = Path(__file__).stem
     PREF_FILE_NAME: typing.Final[str] = BASE_FILE_NAME + ".json"
     LOCK_FILE_NAME: typing.Final[str] = BASE_FILE_NAME + ".lock"
@@ -87,12 +90,12 @@ class D:
 
     ARCHIVING_WAIT_HOUR: typing.Final[int] = 6
     REMOVE_TH_MIN: typing.Final[int] = 1
-    REMOVE_TH_MAX: typing.Final[int] = 99
+    REMOVE_TH_MAX: typing.Final[int] = 90
     REMOVE_START: typing.Final[int] = REMOVE_TH_MAX
     REMOVE_STOP: typing.Final[int] = REMOVE_START
 
     TRANSPORT: typing.Final[str] = "udp"
-    EXT: typing.Final[str] = "mp4"
+    EXT: typing.Final[str] = "mkv"
     SEGMENT_SEC: typing.Final[int] = 900
 
 
@@ -197,11 +200,14 @@ class RecorderEnv:
                 + ["-nostdin"]
                 + ["-hide_banner"]
                 + ["-loglevel", "warning"]
+                + [str(g_option) for g_option in pref.tget("gOptions", [])]
                 + ["-rtsp_transport", pref.tget("transport", D.TRANSPORT)]
+                + [str(i_option) for i_option in pref.tget("iOptions", [])]
                 + ["-i", url]
                 + (["-c:v", vcodec] if isinstance(vcodec, str) else [])
                 + (["-r", str(fps)] if isinstance(fps, int) else [])
                 + (["-c:a", acodec] if isinstance(acodec, str) else [])
+                + [str(o_option) for o_option in pref.tget("oOptions", [])]
                 + ["-f", "segment"]
                 + ["-segment_time", str(segment_sec)]
                 + ["-reset_timestamps", "1"]
@@ -289,7 +295,7 @@ class Lock:
             LOGGER.warning("No Response, Judged To Be Stopped")
             result = False
         elif res == Lock._Res.FAILED:
-            LOGGER.error("FAILED, UNABLED TO JUDGE STATUS")
+            LOGGER.error("FAILED, UNABLE TO JUDGE STATUS")
             result = None
         elif res == Lock._Res.NOT_AVAILABLE:
             result = False
@@ -305,7 +311,7 @@ class Lock:
             LOGGER.warning("No Response, Forced Release")
             result = self.release()
         elif res == Lock._Res.FAILED:
-            LOGGER.error("FAILED, UNABLED TO STOP")
+            LOGGER.error("FAILED, UNABLE TO STOP")
             result = False
         elif res == Lock._Res.NOT_AVAILABLE:
             result = None
@@ -834,7 +840,7 @@ def init(cwd: Path) -> tuple[Env | None, Lock | None]:
 def main() -> int:
     e_code: int = E.NONE
 
-    parser: argparse.ArgumentParser = argparse.ArgumentParser()
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(epilog=C.EPILOG)
     parser.set_defaults(func=status)
     parser.add_argument("-v", "--version", action="version", version=C.VERSION)
     parser.add_argument("-d", "--dir", default=os.getcwd())
