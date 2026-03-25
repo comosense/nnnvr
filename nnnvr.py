@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import typing
@@ -24,7 +25,7 @@ from pathlib import Path
 class C:
     """Constant Values"""
 
-    VERSION: typing.Final[str] = "1.1.0-20260227"
+    VERSION: typing.Final[str] = "1.1.1-20260325"
     EPILOG: typing.Final[str] = (
         "Available container formats and audio/video codecs depend on your system. %(prog)s does not include any container formats, codecs, or patent licenses."
     )
@@ -81,6 +82,7 @@ class D:
 
     REC_BIN: typing.Final[str] = "ffmpeg"
 
+    TEMP_REL_DIR: typing.Final[Path] = Path(C.BASE_FILE_NAME)
     LOG_REL_DIR: typing.Final[Path] = Path("log")
     VIDEO_REL_DIR: typing.Final[Path] = Path("video")
 
@@ -222,15 +224,18 @@ class RecorderEnv:
 @dataclass
 class Env:
     cwd: InitVar[Path]
+    td: InitVar[Path]
 
+    temp_dir: Path = field(init=False)
     log_env: LogEnv = field(init=False)
     storager_env: StoragerEnv = field(init=False)
     recorder_envs: list[RecorderEnv] = field(init=False)
 
-    def __post_init__(self, cwd: Path) -> None:
+    def __post_init__(self, cwd: Path, td: Path) -> None:
         if isinstance(json_str := read_text(cwd / C.PREF_FILE_NAME), str):
             pref: PrefDict = PrefDict(json.loads(json_str))
 
+            self.temp_dir = Path(pref.tget("tempDir", str(td / D.TEMP_REL_DIR)))
             self.log_env = LogEnv(cwd, PrefDict(pref.get("log")))
             self.storager_env = StoragerEnv(cwd, PrefDict(pref.get("video")))
 
@@ -543,10 +548,21 @@ def read_text(file: Path) -> str | None:
 def write_text(file: Path, text: str) -> bool:
     is_success: bool = False
 
+    length = 0
+    temp_file = tempfile.NamedTemporaryFile("w", dir=file.parent, delete=False)
     try:
-        is_success = file.write_text(text) == len(text)
+        length = temp_file.write(text)
+        temp_file.flush()
+        os.fsync(temp_file.fileno())
+        temp_file.close()
+        if length == len(text):
+            Path(temp_file.name).replace(file)
+            is_success = True
     except Exception as e:
-        LOGGER.error(f"FAILED TO WRITE: {file} - {e}")
+        LOGGER.error(f"FAILED TO WRITE({length}/{len(text)}): {file} - {e}")
+    finally:
+        if os.path.exists(temp_file.name):
+            os.remove(temp_file.name)
 
     return is_success
 
@@ -796,20 +812,20 @@ def stop(env: Env, lock: Lock) -> int:
     return e_code
 
 
-def init(cwd: Path) -> tuple[Env | None, Lock | None]:
+def init(cwd: Path, td: Path) -> tuple[Env | None, Lock | None]:
     env: Env | None = None
     lock: Lock | None = None
 
     is_dir_set: bool = True
     try:
-        env = Env(cwd)
-        for dir in [env.log_env.log_dir, env.storager_env.archive_dir]:
+        env = Env(cwd, td)
+        for dir in [env.temp_dir, env.log_env.log_dir, env.storager_env.archive_dir]:
             is_dir_set &= mkdir(dir)
     except Exception as e:
         print(f"FAILED TO GET ENV: {cwd} - {e}", file=sys.stderr)
 
     if isinstance(env, Env) and is_dir_set:
-        lock = Lock(cwd)
+        lock = Lock(env.temp_dir)
         handler = TimedRotatingFileHandler(
             env.log_env.log_dir / C.LOG_FILE_NAME,
             when=C.LOG_WHEN,
@@ -853,7 +869,7 @@ def main() -> int:
     subparser.set_defaults(func=stop)
 
     args: argparse.Namespace = parser.parse_args()
-    env, lock = init(Path(args.dir).resolve())
+    env, lock = init(Path(args.dir).resolve(), Path(tempfile.gettempdir()))
     if isinstance(env, Env) and isinstance(lock, Lock):
         try:
             e_code |= args.func(env, lock)

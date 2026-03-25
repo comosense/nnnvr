@@ -51,7 +51,7 @@ Place `nnnvr.py` in your desired working directory and make it executable.
     chmod +x ./nnnvr.py
     ```
 
-    Replace [VERSION] with the latest version tag from the releases page (e.g., 1.1.0). See: <https://github.com/comosense/nnnvr/releases>
+    Replace [VERSION] with the latest version tag from the releases page (e.g., 1.1.1). See: <https://github.com/comosense/nnnvr/releases>
 
 ### 2. `nnnvr.json`
 
@@ -115,14 +115,15 @@ Create a configuration file named `nnnvr.json` in the same working directory. Ad
             }
         ],
         "recBin": "/PATH/TO/ffmpeg",
+        "tempDir": "PATH/TO/TEMP_DIR",
         "log": {
-            "dir": "/PATH/TO/log",
+            "dir": "/PATH/TO/LOG_DIR",
             "logBackup": 14,
             "streamlogSizeKb": 200,
             "streamlogBackup": 3
         },
         "video": {
-            "dir": "/PATH/TO/video",
+            "dir": "/PATH/TO/VIDEO_DIR",
             "archivingWaitHour": 3,
             "removeStart": 90,
             "removeStop": 80
@@ -136,6 +137,7 @@ Create a configuration file named `nnnvr.json` in the same working directory. Ad
 |:-|:-|:-|:-|:-|
 |`streams`|Yes|JSON array (See **Stream Configuration** below)|An array of IP camera stream configuration objects.|-|
 |`recBin`|No|String|Path to the `ffmpeg` executable.|`"ffmpeg"`|
+|`tempDir`|No|String|Path to the temporary directory used for the lock file. If not specified, the system's default temporary directory is used.|`<system_temp_dir>/nnnvr`|
 |`log`|No|JSON (See **Log Configuration** below)|Preferences for log file management.|(See **Log Configuration** below)|
 |`video`|No|JSON (See **Video Configuration** below)|Preferences for video storage management.|(See **Video Configuration** below)|
 
